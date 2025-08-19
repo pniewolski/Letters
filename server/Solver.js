@@ -2,324 +2,241 @@ const Board = require('./Board');
 const WordDictionary = require('./WordDictionary');
 
 class Solver {
-
     constructor(dictionary) {
         this.dict = dictionary;
     }
 
     solve(board, letters) {
+        const results = [];
 
-        const result = [];
-        for (let n=0; n<15; n++) {
-            result.push(...this.checkLine(board, letters, n, true));
+        // sprawdzamy poziomo i pionowo
+        for (let i = 0; i < 15; i++) {
+            results.push(...this.checkLine(board, letters, i, true));
+            results.push(...this.checkLine(board, letters, i, false));
         }
-        for (let n=0; n<15; n++) {
-            result.push(...this.checkLine(board, letters, n, false));
-        }
-        result.sort((a,b) => {
-            if (a.points > b.points) {
-                return -1;
-            } else if (a.points < b.points) {
-                return 1;
-            } else {
-                return 0;
-            }
-        })
-        return result;
+
+        // sortowanie po punktach malejąco
+        return results.sort((a, b) => b.points - a.points);
     }
 
     checkLine(board, letters, line, horizontal) {
-        let result = [];
-        let template = '';
-        for (let i=0; i<15; i++) {
-            if (horizontal) {
-                template += board.getTiles()[i][line].letter == null ? '.' : board.getTiles()[i][line].letter;
-            } else {
-                template += board.getTiles()[line][i].letter == null ? '.' : board.getTiles()[line][i].letter;
+        const result = [];
+        const template = this.buildTemplate(board, line, horizontal);
+
+        for (let len = 2; len <= 15; len++) {
+            for (let shift = 0; shift <= 15 - len; shift++) {
+                if (!this.isValidPlacement(template, shift, len)) continue;
+
+                const subtemplate = template.slice(shift, shift + len);
+                if (!subtemplate.includes('.')) continue;
+
+                if (/^\.+$/.test(subtemplate) && !this.hasAdjacentLetter(board, line, shift, len, horizontal)) {
+                    continue;
+                }
+
+                const candidates = this.dict.search(len, subtemplate, letters);
+                for (const word of candidates) {
+                    if (this.isWordValid(board, word, line, shift, horizontal)) {
+                        result.push(
+                            this.prepareSingleResult(board, [...letters], word, horizontal, line, shift)
+                        );
+                    }
+                }
             }
         }
-        //console.log("template",template);
-        for (let len=2; len<=15; len++) {
-            for (let shift=0; shift<=15-len; shift++) {
 
-
-
-                //console.log("template",template,"shift",shift,"len",len);
-                if ((shift-1 >= 0) && template[shift-1] != '.') {
-                    // let s1 = template.slice(shift, shift+len);
-                    // console.log("niepoprawny before ",s1);
-                    continue;
-                } else if ((shift+len < 15) && template[shift+len] != '.') {
-                    // let s1 = template.slice(shift, shift+len);
-                    // console.log("niepoprawny after ",s1);
-                    continue;
-                }
-                let subtemplate = template.slice(shift, shift+len);
-
-                if (!subtemplate.includes(".")) {
-                    continue;
-                }
-                if (/^\.+$/.test(subtemplate)) {
-                    //czy styka sie bokiem
-                    let neight = false;
-                    for(let i=shift; i<shift+len; i++) {
-                        if (horizontal) {
-                            if (line>0) {
-                                if (board.getTiles()[i][line-1].letter != null) {
-                                    neight = true;
-                                }
-                            } else if (line<(15-1)) {
-                                if (board.getTiles()[i][line+1].letter != null) {
-                                    neight = true;
-                                }
-                            }
-                        } else {
-                            if (line>0) {
-                                if (board.getTiles()[line-1][i].letter != null) {
-                                    neight = true;
-                                }
-                            } else if (line<(15-1)) {
-                                if (board.getTiles()[line+1][i].letter != null) {
-                                    neight = true;
-                                }
-                            }
-                        }
-                    }
-                    if (!neight) {
-                        continue;
-                    }
-                }
-                //console.log("sprawdzam",subtemplate);
-                const results = this.dict.search(len, subtemplate, letters);
-                if (results.length == 0) {
-                    continue;
-                }
-
-                //weryfikacja dla kazdego slowa
-                results.forEach(word => {
-
-                    let ok = true;
-                    let subPoints = 0;
-                    //console.log("weryfikacja",word);
-                    for(let i=0; i<len; i++) {
-                        if (horizontal) {
-                            let boardLetter = board.getTiles()[i+shift][line].letter;
-                            if (boardLetter) {
-                                continue;
-                            }
-                            //console.log("sprawdzam litere",word[i]);
-                            let startWord = word[i];
-                            for (let j=line+1; j<15; j++) {
-                                if (board.getTiles()[i+shift][j].letter == null) {
-                                    break;
-                                }
-                                startWord = startWord+board.getTiles()[i+shift][j].letter;
-                            }
-                            for (let j=line-1; j>=0; j--) {
-                                if (board.getTiles()[i+shift][j].letter == null) {
-                                    break;
-                                }
-                                startWord = board.getTiles()[i+shift][j].letter+startWord;
-                            }
-                            if (startWord.length == 1) {
-                                continue;
-                            }
-                            if (!this.dict.searchDicionarySimple(startWord)) {
-                                ok = false;
-                                break;
-                            }
-                        } else {
-                            let boardLetter = board.getTiles()[line][i+shift].letter;
-                            if (boardLetter) {
-                                continue;
-                            }
-                            //console.log("sprawdzam litere",word[i]);
-                            let startWord = word[i];
-                            for (let j=line+1; j<15; j++) {
-                                if (board.getTiles()[j][i+shift].letter == null) {
-                                    break;
-                                }
-                                startWord = startWord+board.getTiles()[j][i+shift].letter;
-                            }
-                            for (let j=line-1; j>=0; j--) {
-                                if (board.getTiles()[j][i+shift].letter == null) {
-                                    break;
-                                }
-                                startWord = board.getTiles()[j][i+shift].letter+startWord;
-                            }
-                            if (startWord.length == 1) {
-                                continue;
-                            }
-                            if (!this.dict.searchDicionarySimple(startWord)) {
-                                ok = false;
-                                break;
-                            }
-                        }
-                    }
-                    if (ok) {
-                        // console.log("dodajemy", word, horizontal, line, shift, "len", len);
-                        // let n = board.cloneBoard();
-                        // let w2 = [];
-                        // for (let i=0; i<word.length; i++) {
-                        //     w2[i] = {};
-                        //     w2[i].letter = word[i];
-                        //     w2[i].isBlank = false;
-                        //
-                        // }
-                        // if (horizontal) n.putWord(w2, shift, line, horizontal);
-                        // else n.putWord(w2, line, shift, horizontal);
-                        //
-                        // n.consolePreviewBoard();
-                        let singleResult = this.prepareSingleResult(board, [...letters], word, horizontal, line, shift);
-
-                        result.push(singleResult);
-                    }
-                });
-
-            }
-        }
         return result;
     }
 
-    prepareSingleResult(board, letters, word, horizontal, line, shift) {
-        //console.log("prepareSingleResult",word,horizontal,line,shift);
-        let resultWord = [];
-        for (let i=0; i<word.length; i++) {
-            resultWord[i] = {};
+    buildTemplate(board, line, horizontal) {
+        let template = '';
+        for (let i = 0; i < 15; i++) {
+            const tile = horizontal ? board.getTiles()[i][line] : board.getTiles()[line][i];
+            template += tile.letter ?? '.';
         }
+        return template;
+    }
 
-        let additPoints = 0;
-        let basePoints = 0;
-        let wordMultiply = 1;
-        let letterCount = 0;
+    isValidPlacement(template, shift, len) {
+        if (shift > 0 && template[shift - 1] !== '.') return false;
+        if (shift + len < 15 && template[shift + len] !== '.') return false;
+        return true;
+    }
 
-
-        //console.log("WYRAZ ",word);
-        [...word].forEach(letter => {
-            //console.log("LITERA ",letter);
-            letter = letter.toUpperCase();
-            let x=0;
-            let y=0;
-            let dx = 0;
-            let dy = 0;
-            let letterPoints = 0;
-            let letterMultiplier = 1;
-            let currentWordMul = 1;
-            let countPerpendi = false;
+    hasAdjacentLetter(board, line, shift, len, horizontal) {
+        for (let i = shift; i < shift + len; i++) {
             if (horizontal) {
-                x = shift + letterCount;
-                y = line;
-                dy = 1;
+                if ((line > 0 && board.getTiles()[i][line - 1].letter) ||
+                    (line < 14 && board.getTiles()[i][line + 1].letter)) {
+                    return true;
+                }
             } else {
-                x = line;
-                y = shift + letterCount;
-                dx = 1;
+                if ((line > 0 && board.getTiles()[line - 1][i].letter) ||
+                    (line < 14 && board.getTiles()[line + 1][i].letter)) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    isWordValid(board, word, line, shift, horizontal) {
+        for (let i = 0; i < word.length; i++) {
+            const x = horizontal ? i + shift : line;
+            const y = horizontal ? line : i + shift;
+
+            if (board.getTiles()[x][y].letter) continue;
+
+            let candidate = word[i];
+
+            // rozszerzamy w dół/prawo
+            for (let j = (horizontal ? y : x) + 1; j < 15; j++) {
+                const tile = horizontal ? board.getTiles()[x][j] : board.getTiles()[j][y];
+                if (!tile.letter) break;
+                candidate += tile.letter;
             }
 
-            let existingLetter = board.getTiles()[x][y];
+            // rozszerzamy w górę/lewo
+            for (let j = (horizontal ? y : x) - 1; j >= 0; j--) {
+                const tile = horizontal ? board.getTiles()[x][j] : board.getTiles()[j][y];
+                if (!tile.letter) break;
+                candidate = tile.letter + candidate;
+            }
 
-            //console.log("existingLetter",x,y,existingLetter);
-            if (existingLetter.letter == null) {
-                countPerpendi = true;
-                resultWord[letterCount].letter = letter;
-                resultWord[letterCount].isCurrent = true;
-                let bonus = board.getBonus(x,y);
+            if (candidate.length > 1 && !this.dict.searchDicionarySimple(candidate)) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    checkWord(board, letters, word, horizontal, x, y) {
+        return this.prepareSingleResult(
+            board,
+            [...letters],
+            word,
+            horizontal,
+            horizontal ? y : x,  // line
+            horizontal ? x : y,  // shift
+            true
+        );
+    }
+    prepareSingleResult(board, letters, word, horizontal, line, shift, withChecking = false) {
+        const resultWord = Array.from(word, () => ({}));
+        let additPoints = 0, basePoints = 0, wordMultiply = 1;
+        const perpendicularWords = [];
+
+        [...word].forEach((letter, idx) => {
+            letter = letter.toUpperCase();
+
+            const x = horizontal ? shift + idx : line;
+            const y = horizontal ? line : shift + idx;
+            const tile = board.getTiles()[x][y];
+
+            let letterPoints = 0, letterMultiplier = 1, currentWordMul = 1;
+            const isCurrent = !tile.letter;
+
+            if (isCurrent) {
+                const bonus = board.getBonus(x, y);
                 currentWordMul = bonus.w;
                 wordMultiply *= currentWordMul;
                 letterMultiplier = bonus.l;
 
-                //usuwanie z literek
-                //TODO korzystniej blanki
-                letterPoints = 0;
-
-                //console.log("letters",letters,"zabieram",letter);
                 const index = letters.indexOf(letter);
                 if (index !== -1) {
                     letters.splice(index, 1);
-                    resultWord[letterCount].isBlank = false;
+                    resultWord[idx] = { letter, isCurrent: true, isBlank: false };
                     letterPoints = board.getPointsForLetter(letter);
                 } else {
-                    const index2 = letters.indexOf('*');
-                    if (index2 !== -1) {
-                        resultWord[letterCount].isBlank = true;
-                        letterPoints = 0;
-                        letters.splice(index2, 1);
-                    } else {
-                        throw new Error("cant find letter");
-                    }
+                    const blankIndex = letters.indexOf('*');
+                    if (blankIndex === -1) throw new Error("cant find letter");
+                    letters.splice(blankIndex, 1);
+                    resultWord[idx] = { letter, isCurrent: true, isBlank: true };
                 }
+
+                // 🚀 zapisujemy słowo prostopadłe
+                const perp = this.calculatePerpendicular(
+                    board, x, y, letter,
+                    letterPoints, letterMultiplier,
+                    currentWordMul, horizontal
+                );
+                additPoints += perp.points;
+                if (perp.word) perpendicularWords.push(perp.word);
 
             } else {
-                resultWord[letterCount].isCurrent = false;
-                resultWord[letterCount].letter = letter;
-                letterMultiplier = 1;
-                if (board.getTiles()[x][y].isBlank) {
-                    resultWord[letterCount].isBlank = true;
-                    letterPoints = 0;
-                } else {
-                    resultWord[letterCount].isBlank = false;
-                    letterPoints = board.getPointsForLetter(letter);
-                }
-            }
-
-            //console.log("base letter pts",letterPoints);
-
-            if (countPerpendi) {
-                //console.log("countPerpendi!");
-                let startWord = letter;
-                let extraPoints = letterPoints * letterMultiplier;
-                for (let j = 1; j < 15; j++) {
-                    if ((x + dx * j >= 15) || (y + dy * j >= 15) || board.getTiles()[x + dx * j][y + dy * j].letter == null) {
-                        //console.log("break A",(x + dx * j),(y + dy * j),board.getTiles()[x + dx * j][y + dy * j])
-                        break;
-                    }
-                    startWord = startWord + board.getTiles()[x + dx * j][y + dy * j].letter;
-                    if (!board.getTiles()[x + dx * j][y + dy * j].isBlank) {
-                        extraPoints += board.getPointsForLetter(board.getTiles()[x + dx * j][y + dy * j].letter);
-                    }
-                }
-                for (let j = 1; j < 15; j++) {
-                    if ((x - dx * j < 0) || (y - dy * j < 0) || board.getTiles()[x - dx * j][y - dy * j].letter == null) {
-                        //console.log("break b")
-                        break;
-                    }
-                    startWord = board.getTiles()[x - dx * j][y - dy * j].letter + startWord;
-                    if (!board.getTiles()[x - dx * j][y - dy * j].isBlank) {
-                        extraPoints += board.getPointsForLetter(board.getTiles()[x - dx * j][y - dy * j].letter);
-                    }
-                }
-                if (startWord.length == 1) {
-                    extraPoints = 0;
-                } else {
-                    //console.log("prependiWord",startWord);
-                }
-                //console.log("extraPoints",extraPoints, "wordMultiply",currentWordMul);
-                extraPoints *= currentWordMul;
-                additPoints += extraPoints;
+                resultWord[idx] = { letter, isCurrent: false, isBlank: tile.isBlank };
+                letterPoints = tile.isBlank ? 0 : board.getPointsForLetter(letter);
             }
 
             basePoints += letterPoints * letterMultiplier;
-            //console.log("base letter pts",letterPoints,"letterMultiplier",letterMultiplier,"basePoints",basePoints);
-            //console.log("letterPoints",letterPoints,"letterMultiplier",letterMultiplier,"basePoints",basePoints);
-            letterCount += 1;
-        })
-        basePoints *= wordMultiply;
-        //console.log("basePoints",basePoints, "additPoints", additPoints);
-        basePoints += additPoints;
-        //console.log("ALL",basePoints);
+        });
 
-        //console.log('single result', word, resultWord, line, shift, horizontal, basePoints);
+        basePoints = basePoints * wordMultiply + additPoints;
 
-        //console.log(retObj);
+        // 🔎 dodatkowa walidacja słownika
+        if (withChecking) {
+            let wrongWords = [];
+            if (!this.dict.searchDicionarySimple(word)) {
+                wrongWords.push(word);
+            }
+            for (const perpWord of perpendicularWords) {
+                if (!this.dict.searchDicionarySimple(perpWord)) {
+                    wrongWords.push(perpWord);
+                }
+            }
+
+            if (wrongWords.length > 0) {
+                return {
+                    success: false,
+                    wrongWords: wrongWords
+                };
+            }
+        }
+
         return {
+            success: true,
             wordSimple: word,
+            perpendicularWords: perpendicularWords,
             word: resultWord,
             x: horizontal ? shift : line,
             y: horizontal ? line : shift,
-            horizontal: horizontal,
+            horizontal,
             points: basePoints,
         };
     }
+
+    calculatePerpendicular(board, x, y, letter, letterPoints, letterMultiplier, currentWordMul, horizontal) {
+        let dx = horizontal ? 0 : 1;
+        let dy = horizontal ? 1 : 0;
+        let startWord = letter;
+        let extraPoints = letterPoints * letterMultiplier;
+
+        // w dół/prawo
+        for (let j = 1; j < 15; j++) {
+            const nx = x + dx * j, ny = y + dy * j;
+            if (nx >= 15 || ny >= 15) break;
+            const tile = board.getTiles()[nx][ny];
+            if (!tile.letter) break;
+            startWord += tile.letter;
+            if (!tile.isBlank) extraPoints += board.getPointsForLetter(tile.letter);
+        }
+
+        // w górę/lewo
+        for (let j = 1; j < 15; j++) {
+            const nx = x - dx * j, ny = y - dy * j;
+            if (nx < 0 || ny < 0) break;
+            const tile = board.getTiles()[nx][ny];
+            if (!tile.letter) break;
+            startWord = tile.letter + startWord;
+            if (!tile.isBlank) extraPoints += board.getPointsForLetter(tile.letter);
+        }
+
+        if (startWord.length === 1) {
+            return { word: null, points: 0 };
+        }
+        return { word: startWord, points: extraPoints * currentWordMul };
+    }
+
 }
 
 module.exports = Solver;
