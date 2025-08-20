@@ -1,0 +1,29 @@
+const Table = require("./Table");
+const Solver = require("../board/Solver");
+const WordDictionary = require("../board/WordDictionary");
+const Strategy = require("./Strategy");
+
+class Game {
+    constructor(dictionary) {
+        this.dict = dictionary;
+        this.solver = new Solver(this.dict);
+        this.table = new Table();
+        this.strategy = new Strategy();
+    }
+
+    computerMove(player) {
+        let avaliableMoves = this.solver.solve(this.table.board,this.table.stack[player]);
+        let move = this.strategy.getBestMove(avaliableMoves, this.table.board, this.table.stack[player]);
+        //TODO wymiana???
+
+        console.log("move",move);
+        this.table.applyMove(player, move);
+
+        this.table.board.consolePreviewBoard();
+        console.log(this.table.points);
+        console.log(this.table.bag.lettersBag);
+    }
+
+}
+
+module.exports = Game;

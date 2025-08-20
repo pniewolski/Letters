@@ -18,12 +18,12 @@ async function main() {
 
     const solver = new Solver(dict);
 
-    for (let i=0; i<35; i++) {
-        let res = solver.solve(board, ['*','I','*','D','A','Z','I']);
+    for (let i=0; i<65; i++) {
+        let res = solver.solve(board, ['P','I','Z','*','*']);
 
-        console.log(res[0]);
-        console.log(res[1]);
-        console.log(res[2]);
+        for (let n=0;n<5;n++) console.log(n,res[n].wordSimple,res[n].points, res[n].perpendicularWords, res[n].usedLetters);
+        //console.log(res[1]);
+        //console.log(res[2]);
         board.putWord(res[0].word, res[0].x, res[0].y, res[0].horizontal);
         board.consolePreviewBoard();
     }

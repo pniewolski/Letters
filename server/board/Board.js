@@ -18,7 +18,7 @@ class Board {
     }
 
     loadPoints() {
-        const pointsJson = fs.readFileSync('points.json', 'utf-8');
+        const pointsJson = fs.readFileSync('letters.json', 'utf-8');
         this.points = JSON.parse(pointsJson).points;
     }
 

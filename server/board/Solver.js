@@ -22,6 +22,7 @@ class Solver {
     checkLine(board, letters, line, horizontal) {
         const result = [];
         const template = this.buildTemplate(board, line, horizontal);
+        //console.log("template",template);
 
         for (let len = 2; len <= 15; len++) {
             for (let shift = 0; shift <= 15 - len; shift++) {
@@ -125,6 +126,7 @@ class Solver {
         const resultWord = Array.from(word, () => ({}));
         let additPoints = 0, basePoints = 0, wordMultiply = 1;
         const perpendicularWords = [];
+        const usedLetters = [];
 
         [...word].forEach((letter, idx) => {
             letter = letter.toUpperCase();
@@ -147,11 +149,13 @@ class Solver {
                     letters.splice(index, 1);
                     resultWord[idx] = { letter, isCurrent: true, isBlank: false };
                     letterPoints = board.getPointsForLetter(letter);
+                    usedLetters.push(letter);
                 } else {
                     const blankIndex = letters.indexOf('*');
                     if (blankIndex === -1) throw new Error("cant find letter");
                     letters.splice(blankIndex, 1);
                     resultWord[idx] = { letter, isCurrent: true, isBlank: true };
+                    usedLetters.push('*');
                 }
 
                 // 🚀 zapisujemy słowo prostopadłe
@@ -172,6 +176,10 @@ class Solver {
         });
 
         basePoints = basePoints * wordMultiply + additPoints;
+
+        if (usedLetters.length === 7) {
+            basePoints += 50;
+        }
 
         // 🔎 dodatkowa walidacja słownika
         if (withChecking) {
@@ -202,6 +210,7 @@ class Solver {
             y: horizontal ? line : shift,
             horizontal,
             points: basePoints,
+            usedLetters: usedLetters
         };
     }
 
