@@ -14,6 +14,11 @@ async function main() {
     while(true) {
         game.computerMove(0);
         game.computerMove(1);
+        if (game.table.bag.getBagSize() === 0) {
+            console.log("Koniec gry");
+            break;
+        }
+        game.table.board.consolePreviewBoard();
     }
 }
 

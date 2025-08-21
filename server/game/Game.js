@@ -14,10 +14,13 @@ class Game {
     computerMove(player) {
         let avaliableMoves = this.solver.solve(this.table.board,this.table.stack[player]);
         let move = this.strategy.getBestMove(avaliableMoves, this.table.board, this.table.stack[player]);
-        //TODO wymiana???
-
-        console.log("move",move);
-        this.table.applyMove(player, move);
+        if (move.replace) {
+            console.log("replace");
+            //this.table.updateStack(player,move.letters)
+        } else {
+            console.log("move",move);
+            this.table.applyMove(player, move);
+        }
 
         this.table.board.consolePreviewBoard();
         console.log(this.table.points);

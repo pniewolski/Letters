@@ -31,6 +31,7 @@ class Solver {
                 const subtemplate = template.slice(shift, shift + len);
                 if (!subtemplate.includes('.')) continue;
 
+                //jak linia pusta to olewamy chyba że są jakieś sąsiednie litery to można
                 if (/^\.+$/.test(subtemplate) && !this.hasAdjacentLetter(board, line, shift, len, horizontal)) {
                     continue;
                 }
@@ -177,7 +178,7 @@ class Solver {
 
         basePoints = basePoints * wordMultiply + additPoints;
 
-        if (usedLetters.length === 7) {
+        if (usedLetters.length == 7) {
             basePoints += 50;
         }
 
@@ -203,6 +204,7 @@ class Solver {
 
         return {
             success: true,
+            replace: false,
             wordSimple: word,
             perpendicularWords: perpendicularWords,
             word: resultWord,

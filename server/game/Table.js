@@ -19,8 +19,7 @@ class Table {
         console.log("Stacky zainicjowane",this.stack);
     }
 
-    updateStack(player, letters) {
-        const len = letters.length;
+    deleteFromStack(player,letters) {
         letters.forEach(letter => {
             const index = this.stack[player].findIndex(l => l === letter);
             if (index == -1) {
@@ -28,7 +27,29 @@ class Table {
             }
             this.stack[player].splice(index, 1)[0]; // Usuwamy i przechowujemy element
         });
+    }
+
+    //podajemy użyte litery, zabierane są ze stacka i losowane nowe
+    updateStack(player, letters) {
+        this.deleteFromStack(player,letters);
+        let len = letters.length;
+        if (len > this.bag.getBagSize()) {
+            len = this.bag.getBagSize();
+        }
+        if (len === 0) {
+            return;
+        }
         let newLetters = this.bag.draw(len);
+        this.stack[player].push(...newLetters);
+    }
+
+    replaceLetters(player, letters) {
+        const len = letters.length;
+        if (len>this.bag.getBagSize()) {
+            return [];
+        }
+        let newLetters = this.bag.replace(letters);
+        this.deleteFromStack(player,letters);
         this.stack[player].push(...newLetters);
     }
 

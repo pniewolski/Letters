@@ -60,9 +60,13 @@ class Board {
         for (let j = 0; j < 15; j++) {
             for (let i = 0; i < 15; i++) {
                 if (this.tiles[i][j].letter === null) {
-                    result += "_";
+                    result += "-";
                 } else {
-                    result += this.tiles[i][j].letter;
+                    if (this.tiles[i][j].isBlank) {
+                        result += this.tiles[i][j].letter.toLowerCase();
+                    } else {
+                        result += this.tiles[i][j].letter;
+                    }
                 }
             }
             result += "\n";
