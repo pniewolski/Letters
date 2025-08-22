@@ -8,6 +8,7 @@ class Solver {
 
     solve(board, letters) {
         const results = [];
+        console.log("SOLVE");
 
         // sprawdzamy poziomo i pionowo
         for (let i = 0; i < 15; i++) {
@@ -48,6 +49,30 @@ class Solver {
         }
 
         return result;
+    }
+
+    generateFirstWord(board, letters) {
+        const template = "...............";
+        const horizontal = true;
+        const line = 6;
+        const result = [];
+
+        for (let len = 2; len <= 7; len++) {
+            for (let shift = 1; shift <= 15 - len; shift++) {
+                if ((shift+len < 6) || (shift > 6)) {
+                    continue;
+                }
+                const subtemplate = template.slice(shift, shift + len);
+                console.log(subtemplate);
+                const candidates = this.dict.search(len, subtemplate, letters);
+                for (const word of candidates) {
+                    result.push(
+                        this.prepareSingleResult(board, [...letters], word, horizontal, line, shift)
+                    );
+                }
+            }
+        }
+        return result.sort((a, b) => b.points - a.points);
     }
 
     buildTemplate(board, line, horizontal) {
