@@ -19,10 +19,12 @@ class Game {
         } else {
             avaliableMoves = this.solver.solve(this.table.board, this.table.stack[player]);
         }
+        console.log("STACK BEFOERE MOVE", this.table.stack[player]);
         let move = this.strategy.getBestMove(avaliableMoves, this.table.board, this.table.stack[player]);
         if (move.replace) {
             console.log("replace");
-            //this.table.updateStack(player,move.letters)
+            this.table.updateStack(player,move.letters)
+            console.log("STACK AFTER MOVE", this.table.stack[player]);
         } else {
             //console.log("move",move);
             this.table.applyMove(player, move);
