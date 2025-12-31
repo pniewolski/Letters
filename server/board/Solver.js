@@ -63,7 +63,7 @@ class Solver {
                     continue;
                 }
                 const subtemplate = template.slice(shift, shift + len);
-                console.log(subtemplate);
+                //console.log(subtemplate);
                 const candidates = this.dict.search(len, subtemplate, letters);
                 for (const word of candidates) {
                     result.push(
