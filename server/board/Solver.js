@@ -154,11 +154,9 @@ class Solver {
     _buildCrossChecks(tiles, line, horizontal) {
         const arr = new Array(SIZE);
         for (let i = 0; i < SIZE; i++) {
-            // tylko dla pustych pól na linii ma to sens
             const tile = horizontal ? tiles[i][line] : tiles[line][i];
             if (tile.letter) { arr[i] = null; continue; }
 
-            // zbieramy litery powyżej/poniżej (lub lewo/prawo) na osi prostopadłej
             let prefix = '', suffix = '';
             if (horizontal) {
                 for (let j = line - 1; j >= 0; j--) {
@@ -184,30 +182,19 @@ class Solver {
                 }
             }
 
-            if (prefix.length === 0 && suffix.length === 0) {
-                arr[i] = { allowed: null }; // brak ograniczeń
-            } else {
-                // wyznacz dozwolone litery (każdą sprawdzamy w słowniku)
-                const allowed = new Set();
-                // optymalizacja: zapytanie do słownika tylko jeśli mamy taką metodę
-                // — zachowujemy zgodność: używamy searchDicionarySimple jak wcześniej
-                for (let c = 65; c <= 90; c++) {
-                    const ch = String.fromCharCode(c);
-                    const w = prefix + ch + suffix;
-                    if (this.dict.searchDicionarySimple(w)) allowed.add(ch);
-                }
-                arr[i] = { allowed };
-            }
+            arr[i] = (prefix.length === 0 && suffix.length === 0)
+                ? { allowed: null }
+                : { allowed: this.dict.crossCheckLetters(prefix, suffix) };
         }
         return arr;
     }
 
     _passesCrossChecks(word, subtemplate, shift, crossChecks) {
         for (let i = 0; i < word.length; i++) {
-            if (subtemplate.charCodeAt(i) !== 46) continue; // już była litera
+            if (subtemplate.charCodeAt(i) !== 46) continue;
             const cc = crossChecks[shift + i];
-            if (!cc || cc.allowed === null || cc.allowed === undefined) continue;
-            if (!cc.allowed.has(word[i].toUpperCase())) return false;
+            if (!cc || cc.allowed == null) continue;
+            if (!cc.allowed.has(word[i])) return false;
         }
         return true;
     }
