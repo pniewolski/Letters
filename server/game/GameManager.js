@@ -355,6 +355,40 @@ class GameManager {
     }
 
     /**
+     * Zwraca podpowiedzi (najlepsze ruchy) dla gracza.
+     * @param {string} userId - Identyfikator gracza
+     * @param {number} [count=5] - Ile podpowiedzi zwrócić
+     * @returns {{success: boolean, hints?: Array<{wordSimple: string, x: number, y: number, horizontal: boolean, points: number}>, error?: string}}
+     */
+    getHint(userId, count = 5) {
+        const r = this._resolve(userId);
+        if (!r) return { success: false, error: "Nie znaleziono gry." };
+        if (r.state.finished) return { success: false, error: "Gra jest zakończona." };
+
+        const table = r.state.game.table;
+        const solver = r.state.game.solver;
+        const letters = table.stack[r.slot];
+
+        let moves;
+        if (table.currentTurn === 0) {
+            moves = solver.generateFirstWord(table.board, letters);
+        } else {
+            moves = solver.solve(table.board, letters);
+        }
+
+        const hints = moves.slice(0, count).map(m => ({
+            wordSimple: m.wordSimple,
+            x: m.x,
+            y: m.y,
+            horizontal: m.horizontal,
+            points: m.points,
+            usedLetters: m.usedLetters,
+        }));
+
+        return { success: true, hints };
+    }
+
+    /**
      * Zwraca aktualny publiczny stan gry dla gracza.
      * @param {string} userId - Identyfikator gracza
      * @returns {{success: boolean, state?: object, error?: string}}
