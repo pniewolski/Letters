@@ -3,6 +3,31 @@ const Solver = require("../board/Solver");
 const WordDictionary = require("../board/WordDictionary");
 const Strategy = require("./Strategy");
 
+/**
+ * @class Game
+ * @description Główna klasa logiki gry Scrabble. Zarządza rozgrywką między graczami
+ * (komputer vs komputer, człowiek vs komputer). Koordynuje Table (stan gry),
+ * Solver (wyszukiwanie ruchów) i Strategy (podejmowanie decyzji przez AI).
+ *
+ * @example
+ * const WordDictionary = require('../board/WordDictionary');
+ * const Game = require('./Game');
+ *
+ * const dict = new WordDictionary();
+ * await dict.ready;
+ * const game = new Game(dict);
+ *
+ * // Ruch komputera (gracz 0)
+ * game.computerMove(0);
+ *
+ * // Ruch człowieka (gracz 1) — położenie słowa
+ * const result = game.humanMove(1, false, {
+ *   tiles: [{letter:'K', x:7, y:7, isBlank:false}, {letter:'O', x:8, y:7, isBlank:false}]
+ * });
+ *
+ * // Wymiana liter (gracz 1)
+ * const result2 = game.humanMove(1, true, { letters: ['X', 'Ź'] });
+ */
 class Game {
     constructor(dictionary) {
         this.dict = dictionary;

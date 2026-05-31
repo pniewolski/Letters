@@ -1,13 +1,60 @@
 const Board = require('./Board');
 const WordDictionary = require('./WordDictionary');
 
+/**
+ * Rozmiar planszy (15x15).
+ * @constant {number}
+ */
 const SIZE = 15;
 
+/**
+ * @class Solver
+ * @description Silnik rozwiązujący (solver) gry Scrabble. Znajduje wszystkie możliwe
+ * ruchy dla danego stanu planszy i zestawu liter na stojaku, posortowane wg punktów.
+ *
+ * Algorytm:
+ * 1. Buduje szablon (template) dla każdej linii planszy (15 wierszy + 15 kolumn).
+ * 2. Wyznacza "anchory" — puste pola sąsiadujące z istniejącymi literami.
+ * 3. Dla każdego anchora generuje możliwe zakresy umieszczenia słowa.
+ * 4. Filtruje przez cross-checks (dozwolone litery prostopadłe).
+ * 5. Wyszukuje kandydatów w WordDictionary i oblicza punkty.
+ *
+ * @example
+ * const Solver = require('./Solver');
+ * const WordDictionary = require('./WordDictionary');
+ * const Board = require('./Board');
+ *
+ * const dict = new WordDictionary();
+ * await dict.ready;
+ * const solver = new Solver(dict);
+ * const board = new Board();
+ *
+ * // Pierwszy ruch
+ * const moves = solver.generateFirstWord(board, ['K','O','T','E','L','A','S']);
+ * console.log(moves[0]); // najlepszy ruch
+ *
+ * // Kolejne ruchy
+ * board.putWord(moves[0].word, moves[0].x, moves[0].y, moves[0].horizontal);
+ * const nextMoves = solver.solve(board, ['P','I','Z','D','A','R','*']);
+ * console.log(nextMoves[0]); // najlepszy następny ruch
+ */
 class Solver {
+    /**
+     * Tworzy instancję Solvera.
+     * @param {WordDictionary} dictionary - Załadowany słownik
+     */
     constructor(dictionary) {
         this.dict = dictionary;
     }
 
+    /**
+     * Główna metoda rozwiązująca — znajduje wszystkie możliwe ruchy.
+     * Automatycznie wykrywa czy plansza jest pusta (pierwszy ruch) i deleguje odpowiednio.
+     * @param {Board} board - Aktualna plansza
+     * @param {string[]} letters - Litery na stojaku gracza (np. ['A','B','*'])
+     * @returns {Array<object>} Tablica ruchów posortowana malejąco wg punktów.
+     *   Każdy ruch: { success, wordSimple, word, x, y, horizontal, points, usedLetters, perpendicularWords }
+     */
     solve(board, letters) {
         const results = [];
         // cache planszy raz na całe wywołanie
@@ -35,6 +82,11 @@ class Solver {
         return results.sort((a, b) => b.points - a.points);
     }
 
+    /**
+     * Sprawdza czy plansza jest całkowicie pusta.
+     * @returns {boolean} true jeśli brak jakiejkolwiek litery na planszy
+     * @private
+     */
     _isBoardEmpty() {
         const t = this._tiles;
         for (let x = 0; x < SIZE; x++)
@@ -43,6 +95,16 @@ class Solver {
         return true;
     }
 
+    /**
+     * Analizuje pojedynczą linię planszy (wiersz lub kolumnę) i zwraca możliwe ruchy.
+     * @param {Board} board - Plansza
+     * @param {string[]} letters - Litery na stojaku
+     * @param {number} line - Numer linii (0-14)
+     * @param {boolean} horizontal - true = analizuj wiersz, false = kolumnę
+     * @param {number} [rackSize] - Rozmiar stojaka (optymalizacja)
+     * @returns {Array<object>} Tablica znalezionych ruchów dla tej linii
+     * @private
+     */
     checkLine(board, letters, line, horizontal, rackSize = letters.length) {
         const result = [];
         const tiles = this._tiles || board.getTiles();
@@ -109,6 +171,14 @@ class Solver {
         return result;
     }
 
+    /**
+     * Buduje szablon linii (string 15 znaków) — litery z planszy + '.' dla pustych pól.
+     * @param {Array} tiles - Tablica pól planszy (board.getTiles())
+     * @param {number} line - Numer linii
+     * @param {boolean} horizontal - Kierunek
+     * @returns {string} Szablon np. "...KOT...A....."
+     * @private
+     */
     _buildTemplateFast(tiles, line, horizontal) {
         let s = '';
         if (horizontal) {
@@ -125,6 +195,16 @@ class Solver {
         return s;
     }
 
+    /**
+     * Wyznacza pozycje "anchorów" — puste pola sąsiadujące z istniejącymi literami.
+     * Anchor to miejsce, w którym nowe słowo musi się "zaczepić" o istniejące litery.
+     * @param {Array} tiles - Pola planszy
+     * @param {string} template - Szablon linii
+     * @param {number} line - Numer linii
+     * @param {boolean} horizontal - Kierunek
+     * @returns {number[]} Tablica indeksów anchorów na linii
+     * @private
+     */
     _findAnchors(tiles, template, line, horizontal) {
         const out = [];
         for (let i = 0; i < SIZE; i++) {
@@ -147,9 +227,15 @@ class Solver {
     }
 
     /**
-     * Dla każdej pozycji na linii budujemy:
-     *   { allowed: Set<letter> | null, prefix: string, suffix: string, prefixPts: number, suffixPts: number }
-     * allowed = null oznacza brak ograniczenia (brak słowa prostopadłego).
+     * Buduje cross-checks dla każdej pozycji na linii.
+     * Cross-check = zbiór liter dozwolonych na danym polu, aby nie tworzyć
+     * niepoprawnych słów prostopadłych.
+     * @param {Array} tiles - Pola planszy
+     * @param {number} line - Numer linii
+     * @param {boolean} horizontal - Kierunek
+     * @returns {Array<{allowed: Set<string>|null}|null>} Tablica 15 elementów.
+     *   null = pole zajęte, {allowed: null} = brak ograniczenia, {allowed: Set} = dozwolone litery
+     * @private
      */
     _buildCrossChecks(tiles, line, horizontal) {
         const arr = new Array(SIZE);
@@ -189,6 +275,15 @@ class Solver {
         return arr;
     }
 
+    /**
+     * Sprawdza czy słowo-kandydat przechodzi cross-checks na wszystkich pustych pozycjach.
+     * @param {string} word - Słowo kandydat
+     * @param {string} subtemplate - Fragment szablonu dla tego słowa
+     * @param {number} shift - Przesunięcie (pozycja startowa) słowa na linii
+     * @param {Array} crossChecks - Tablica cross-checks
+     * @returns {boolean} true jeśli słowo spełnia wszystkie cross-checks
+     * @private
+     */
     _passesCrossChecks(word, subtemplate, shift, crossChecks) {
         for (let i = 0; i < word.length; i++) {
             if (subtemplate.charCodeAt(i) !== 46) continue;
@@ -199,6 +294,13 @@ class Solver {
         return true;
     }
 
+    /**
+     * Generuje możliwe pierwsze ruchy (plansza pusta).
+     * Pierwszy ruch musi przechodzić przez środek planszy (7,7).
+     * @param {Board} board - Pusta plansza
+     * @param {string[]} letters - Litery na stojaku (max 7)
+     * @returns {Array<object>} Ruchy posortowane malejąco wg punktów
+     */
     generateFirstWord(board, letters) {
         const template = ".".repeat(SIZE);
         const horizontal = true;
@@ -221,17 +323,41 @@ class Solver {
         return result.sort((a, b) => b.points - a.points);
     }
 
-    // Zostawione dla zgodności wstecznej
+    /**
+     * Buduje szablon linii (wersja publiczna dla kompatybilności wstecznej).
+     * @param {Board} board - Plansza
+     * @param {number} line - Numer linii
+     * @param {boolean} horizontal - Kierunek
+     * @returns {string} Szablon linii
+     * @deprecated Użyj _buildTemplateFast zamiast tego
+     */
     buildTemplate(board, line, horizontal) {
         return this._buildTemplateFast(board.getTiles(), line, horizontal);
     }
 
+    /**
+     * Sprawdza czy umieszczenie słowa w danym zakresie jest poprawne
+     * (nie styka się bezpośrednio z literami poza zakresem).
+     * @param {string} template - Szablon linii
+     * @param {number} shift - Pozycja startowa
+     * @param {number} len - Długość słowa
+     * @returns {boolean} true jeśli umieszczenie jest izolowane od sąsiednich liter poza zakresem
+     */
     isValidPlacement(template, shift, len) {
         if (shift > 0 && template.charCodeAt(shift - 1) !== 46) return false;
         if (shift + len < SIZE && template.charCodeAt(shift + len) !== 46) return false;
         return true;
     }
 
+    /**
+     * Sprawdza czy w podanym zakresie istnieje sąsiadująca litera w kierunku prostopadłym.
+     * @param {Board} board - Plansza
+     * @param {number} line - Numer linii
+     * @param {number} shift - Pozycja startowa
+     * @param {number} len - Długość zakresu
+     * @param {boolean} horizontal - Kierunek
+     * @returns {boolean} true jeśli istnieje sąsiad prostopadły
+     */
     hasAdjacentLetter(board, line, shift, len, horizontal) {
         const tiles = this._tiles || board.getTiles();
         for (let i = shift; i < shift + len; i++) {
@@ -246,6 +372,16 @@ class Solver {
         return false;
     }
 
+    /**
+     * Waliduje słowo pod kątem poprawności tworzonych słów prostopadłych.
+     * @param {Board} board - Plansza
+     * @param {string} word - Słowo do walidacji
+     * @param {number} line - Numer linii
+     * @param {number} shift - Pozycja startowa
+     * @param {boolean} horizontal - Kierunek
+     * @returns {boolean} true jeśli wszystkie słowa prostopadłe są poprawne
+     * @deprecated Użyj cross-checks zamiast tego (szybsza metoda)
+     */
     isWordValid(board, word, line, shift, horizontal) {
         // pozostawione dla kompatybilności – używaj cross-checks zamiast tego
         const tiles = this._tiles || board.getTiles();
@@ -270,6 +406,17 @@ class Solver {
         return true;
     }
 
+    /**
+     * Sprawdza poprawność słowa podanego przez gracza i oblicza punkty.
+     * Używane do walidacji ruchów ludzkich graczy.
+     * @param {Board} board - Plansza
+     * @param {string[]} letters - Litery na stojaku gracza
+     * @param {string} word - Pełne słowo (z literami już na planszy)
+     * @param {boolean} horizontal - Kierunek
+     * @param {number} x - Współrzędna X początku
+     * @param {number} y - Współrzędna Y początku
+     * @returns {object} Wynik: { success: true, word, points, ... } lub { success: false, wrongWords }
+     */
     checkWord(board, letters, word, horizontal, x, y) {
         return this.prepareSingleResult(
             board, [...letters], word, horizontal,
@@ -279,6 +426,20 @@ class Solver {
         );
     }
 
+    /**
+     * Przygotowuje kompletny wynik dla pojedynczego ruchu — oblicza punkty,
+     * zużyte litery, słowa prostopadłe, bonus za 7 liter (+50 pkt).
+     * @param {Board} board - Plansza
+     * @param {string[]} letters - Kopia liter na stojaku
+     * @param {string} word - Słowo do umieszczenia (uppercase)
+     * @param {boolean} horizontal - Kierunek
+     * @param {number} line - Numer linii
+     * @param {number} shift - Pozycja startowa na linii
+     * @param {boolean} [withChecking=false] - Czy walidować słowa w słowniku
+     * @returns {object} Obiekt ruchu:
+     *   { success, replace, wordSimple, perpendicularWords, word, x, y, horizontal, points, usedLetters }
+     *   lub przy withChecking=true i błędach: { success: false, wrongWords }
+     */
     prepareSingleResult(board, letters, word, horizontal, line, shift, withChecking = false) {
         const tiles = this._tiles || board.getTiles();
         const wordLen = word.length;
@@ -361,6 +522,18 @@ class Solver {
         };
     }
 
+    /**
+     * Oblicza punkty za słowo prostopadłe tworzone przez umieszczenie litery na danym polu.
+     * @param {Board} board - Plansza
+     * @param {number} x - Współrzędna X umieszczanej litery
+     * @param {number} y - Współrzędna Y umieszczanej litery
+     * @param {string} letter - Umieszczana litera
+     * @param {number} letterPoints - Punkty za literę
+     * @param {number} letterMultiplier - Mnożnik litery (z bonusu pola)
+     * @param {number} currentWordMul - Mnożnik słowa (z bonusu pola)
+     * @param {boolean} horizontal - Kierunek głównego słowa
+     * @returns {{word: string|null, points: number}} Słowo prostopadłe i jego punkty (null jeśli brak)
+     */
     calculatePerpendicular(board, x, y, letter, letterPoints, letterMultiplier, currentWordMul, horizontal) {
         const tiles = this._tiles || board.getTiles();
         const dx = horizontal ? 0 : 1;
