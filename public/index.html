@@ -1,10 +1,106 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="pl">
 <head>
     <meta charset="UTF-8">
-    <title>Game</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Scrabble</title>
+    <link rel="stylesheet" href="style.css">
 </head>
 <body>
 
+<!-- ═══════════════════ EKRAN STARTOWY ═══════════════════ -->
+<div id="screen-menu" class="screen active">
+    <div class="menu-box">
+        <h1 id="app-title">Scrabble</h1>
+        <button id="btn-vs-computer">Graj z komputerem</button>
+        <button id="btn-vs-human">Graj z człowiekiem</button>
+        <button id="btn-vs-compcomp">Komputer vs Komputer (podgląd)</button>
+        <div id="join-section" class="hidden">
+            <input type="text" id="input-game-id" placeholder="Wklej kod gry (puste = nowy pokój)">
+            <button id="btn-join">Dołącz / Stwórz pokój</button>
+        </div>
+        <p id="menu-status" class="status"></p>
+    </div>
+</div>
+
+<!-- ═══════════════════ EKRAN GRY ═══════════════════ -->
+<div id="screen-game" class="screen">
+    <div class="game-layout">
+
+        <!-- PANEL LEWY: info + czat -->
+        <aside class="panel-left">
+            <div class="info-box">
+                <div class="player-info mine">
+                    <span id="my-label" class="label">Ty:</span>
+                    <span id="my-points" class="points">0</span> pkt
+                </div>
+                <div class="player-info opponent">
+                    <span id="opp-label" class="label">Przeciwnik:</span>
+                    <span id="opp-points" class="points">0</span> pkt
+                    <span id="opp-rack-info" class="rack-info">(<span id="opp-rack-size">7</span> liter)</span>
+                </div>
+                <div class="game-meta">
+                    <div>Worek: <span id="bag-size">100</span></div>
+                    <div>Tura: <span id="turn-indicator">-</span></div>
+                    <div class="timer">⏱ <span id="clock">0:00</span></div>
+                </div>
+            </div>
+
+            <div class="chat-box">
+                <div id="chat-messages" class="chat-messages"></div>
+                <div class="chat-input-row">
+                    <input type="text" id="chat-input" placeholder="Wiadomość...">
+                    <button id="btn-chat-send">▶</button>
+                </div>
+            </div>
+        </aside>
+
+        <!-- CENTRUM: plansza -->
+        <main class="board-area">
+            <div id="board" class="board"></div>
+
+            <!-- Stojak gracza (oraz druga podstawka w trybie widza) -->
+            <div class="rack-area">
+                <div id="rack-label-1" class="rack-label spectator-only"></div>
+                <div id="rack" class="rack"></div>
+                <div id="rack-label-2" class="rack-label spectator-only"></div>
+                <div id="rack2" class="rack spectator-only"></div>
+            </div>
+
+            <!-- Przyciski akcji -->
+            <div id="actions" class="actions">
+                <button id="btn-confirm" class="btn-action btn-green">✓ Zatwierdź</button>
+                <button id="btn-recall" class="btn-action">↩ Cofnij</button>
+                <button id="btn-pass" class="btn-action">⏭ Pas</button>
+                <button id="btn-exchange" class="btn-action">🔄 Wymień</button>
+                <button id="btn-hint" class="btn-action btn-hint">💡 Podpowiedź</button>
+                <button id="btn-menu" class="btn-action btn-menu">⏏ Menu</button>
+            </div>
+        </main>
+
+        <!-- PANEL PRAWY: podgląd live + hinty -->
+        <aside class="panel-right">
+            <div id="hint-box" class="hint-box hidden">
+                <h3>Podpowiedzi</h3>
+                <ul id="hint-list"></ul>
+            </div>
+            <div id="live-preview-info" class="live-info hidden">
+                <h4>Przeciwnik układa...</h4>
+                <div id="live-dots"></div>
+            </div>
+        </aside>
+
+    </div>
+</div>
+
+<!-- ═══════════════════ MODAL: wybór litery blanka ═══════════════════ -->
+<div id="modal-blank" class="modal hidden">
+    <div class="modal-content">
+        <h3>Wybierz literę dla blanka</h3>
+        <div id="blank-letters" class="blank-grid"></div>
+    </div>
+</div>
+
+<script type="module" src="js/main.js"></script>
 </body>
 </html>

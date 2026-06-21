@@ -215,6 +215,21 @@ class Board {
         return this.tiles;
     }
 
+    /**
+     * Sprawdza, czy plansza jest pusta (nie postawiono jeszcze żadnej litery).
+     * Używane do wykrywania pierwszego ruchu — niezależnie od licznika tur,
+     * który rośnie także przy pasowaniu i nieudanych słowach.
+     * @returns {boolean} true jeśli na planszy nie ma żadnej litery
+     */
+    isEmpty() {
+        for (let i = 0; i < 15; i++) {
+            for (let j = 0; j < 15; j++) {
+                if (this.tiles[i][j].letter !== null) return false;
+            }
+        }
+        return true;
+    }
+
 }
 
 module.exports = Board;

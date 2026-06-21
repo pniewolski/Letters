@@ -18,6 +18,7 @@
  */
 
 const path = require('path');
+const fs = require('fs');
 const http = require('http');
 const express = require('express');
 const { WebSocketServer } = require('ws');
@@ -32,12 +33,52 @@ const PORT = process.env.PORT || 3000;
 // Zmiana katalogu roboczego na /server (bo klasy czytają pliki relatywnie)
 process.chdir(path.join(__dirname));
 
+/**
+ * Buduje wspólną konfigurację dla frontendu z plików serwera.
+ * Łączy: config.json (tytuł, kolory, flagi), layout.json (bonusy) oraz
+ * letters.json (punktacja liter — spłaszczona do mapy litera→punkty).
+ * Dzięki temu front NIE duplikuje tych danych — pobiera je z /api/config.
+ * @returns {object} Konfiguracja: { title, alphabet, flags, boardColors, boardLayout, letterPoints }
+ */
+function buildClientConfig() {
+    const cfg = JSON.parse(fs.readFileSync(path.join(__dirname, 'config.json'), 'utf-8'));
+    const boardLayout = JSON.parse(fs.readFileSync(path.join(__dirname, 'layout.json'), 'utf-8'));
+    const lettersData = JSON.parse(fs.readFileSync(path.join(__dirname, 'letters.json'), 'utf-8'));
+
+    // Spłaszcz punktację: { "1": ["A",...] } -> { A: 1, ... }
+    const letterPoints = {};
+    for (const [pts, arr] of Object.entries(lettersData.points)) {
+        for (const l of arr) letterPoints[l] = Number(pts);
+    }
+    letterPoints['*'] = 0; // blank = 0 pkt
+
+    return {
+        title: cfg.title || 'Scrabble',
+        alphabet: cfg.alphabet || '',
+        flags: cfg.flags || {},
+        boardColors: (cfg.board && cfg.board.colors) || {},
+        boardLayout,
+        letterPoints,
+    };
+}
+
+/** @type {object} Konfiguracja klienta (budowana raz przy starcie, współdzielona). */
+const CLIENT_CONFIG = buildClientConfig();
+
 // ─────────────────────────────────────────────────────────────────────────────
 // INICJALIZACJA
 // ─────────────────────────────────────────────────────────────────────────────
 
 const app = express();
 app.use(express.static(path.join(__dirname, '..', 'public')));
+
+/**
+ * Endpoint konfiguracji — front pobiera stąd tytuł, kolory planszy,
+ * układ bonusów i punktację liter (zamiast je duplikować w kodzie).
+ */
+app.get('/api/config', (req, res) => {
+    res.json(CLIENT_CONFIG);
+});
 
 const httpServer = http.createServer(app);
 const wss = new WebSocketServer({ server: httpServer });
@@ -58,6 +99,18 @@ const connections = new Map();
  * @type {Map<WebSocket, string>}
  */
 const socketToUser = new Map();
+
+/**
+ * Aktywne pętle symulacji komputer vs komputer.
+ * @type {Map<string, NodeJS.Timeout>} gameId -> intervalId
+ */
+const compLoops = new Map();
+
+/**
+ * Mapa widzów gier komputer vs komputer.
+ * @type {Map<string, string>} userId(widza) -> gameId
+ */
+const spectatorGames = new Map();
 
 // ─────────────────────────────────────────────────────────────────────────────
 // POMOCNICZE
@@ -106,6 +159,49 @@ function broadcastGameState(userId) {
     }
 }
 
+/**
+ * Zatrzymuje pętlę symulacji komputer vs komputer.
+ * @param {string} gameId - Identyfikator gry
+ */
+function stopCompVsCompLoop(gameId) {
+    const interval = compLoops.get(gameId);
+    if (interval) {
+        clearInterval(interval);
+        compLoops.delete(gameId);
+    }
+}
+
+/**
+ * Uruchamia pętlę symulacji komputer vs komputer.
+ * Co `stepMs` wykonuje jeden ruch i wysyła stan widzowi, aby oglądał grę na żywo.
+ * @param {string} gameId - Identyfikator gry
+ * @param {string} spectatorUserId - userId widza
+ */
+function startCompVsCompLoop(gameId, spectatorUserId) {
+    const stepMs = CLIENT_CONFIG.flags.compVsCompStepMs || 1400;
+    const MAX_STEPS = 600; // zabezpieczenie przed patologiczną nieskończoną grą
+    let steps = 0;
+
+    const interval = setInterval(() => {
+        const step = gm.stepCompVsComp(gameId);
+        const ws = connections.get(spectatorUserId);
+
+        if (!step.success) { stopCompVsCompLoop(gameId); return; }
+
+        if (ws) {
+            send(ws, { type: 'gameState', state: step.state });
+            if (step.lastMove) send(ws, { type: 'compMove', move: step.lastMove });
+        }
+
+        if (step.finished || ++steps >= MAX_STEPS) {
+            stopCompVsCompLoop(gameId);
+            if (ws) send(ws, { type: 'gameOver', state: step.state });
+        }
+    }, stepMs);
+
+    compLoops.set(gameId, interval);
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // OBSŁUGA ZDARZEŃ WEBSOCKET
 // ─────────────────────────────────────────────────────────────────────────────
@@ -121,8 +217,8 @@ const handlers = {
     // ═══════════════════════════════════════════════════════════════════════
 
     /**
-     * Tworzy grę z komputerem.
-     * Klient: { type: "createGame", mode: "computer", difficulty?: number }
+     * Tworzy grę z komputerem, z innym graczem lub komputer vs komputer.
+     * Klient: { type: "createGame", mode: "computer"|"human"|"compcomp", difficulty?: number }
      */
     async createGame(ws, payload) {
         const mode = payload.mode || 'computer';
@@ -130,6 +226,8 @@ const handlers = {
 
         if (mode === 'computer') {
             result = await gm.createGameWithComputer(payload.difficulty || 1);
+        } else if (mode === 'compcomp') {
+            result = await gm.createGameWithCompVsComp();
         } else {
             result = await gm.createGameWithHuman();
         }
@@ -138,6 +236,12 @@ const handlers = {
             // Powiąż socket z userId
             connections.set(result.userId, ws);
             socketToUser.set(ws, result.userId);
+
+            // Tryb obserwacji — uruchom automatyczną symulację
+            if (mode === 'compcomp') {
+                spectatorGames.set(result.userId, result.gameId);
+                startCompVsCompLoop(result.gameId, result.userId);
+            }
         }
 
         return { type: 'createGame:response', ...result };
@@ -403,6 +507,13 @@ wss.on('connection', (ws) => {
         const userId = socketToUser.get(ws);
         if (userId) {
             console.log(`[WS] Rozłączono: ${userId}`);
+
+            // Jeśli to widz gry komputer vs komputer — zatrzymaj symulację
+            const spectatedGameId = spectatorGames.get(userId);
+            if (spectatedGameId) {
+                stopCompVsCompLoop(spectatedGameId);
+                spectatorGames.delete(userId);
+            }
 
             // Powiadom przeciwnika o rozłączeniu
             sendToOpponent(userId, { type: 'opponentDisconnected' });

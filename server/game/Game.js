@@ -37,31 +37,68 @@ class Game {
     }
 
     /**
-     * Ruch komputera.
+     * Ruch komputera. Sam decyduje czy położyć słowo, wymienić litery, czy spasować.
+     * Zawsze poprawnie zwiększa licznik tury (currentTurn).
      * @param {number} player - numer gracza (0 lub 1)
+     * @returns {{ passed: boolean, replaced: boolean, points: number, wordSimple?: string, letters?: string[] }}
+     *   Informacja o wykonanym ruchu (do logu / podglądu):
+     *   - położenie słowa: { passed:false, replaced:false, points, wordSimple }
+     *   - wymiana liter:   { passed:false, replaced:true, points:0, letters }
+     *   - pasowanie:       { passed:true, replaced:false, points:0 }
      */
     computerMove(player) {
-        let avaliableMoves = null;
-        if (this.table.currentTurn === 0) {
-            console.log("first move");
-            avaliableMoves = this.solver.generateFirstWord(this.table.board, this.table.stack[player]);
-        } else {
-            avaliableMoves = this.solver.solve(this.table.board, this.table.stack[player]);
-        }
-        console.log("STACK BEFOERE MOVE", this.table.stack[player]);
-        let move = this.strategy.getBestMove(avaliableMoves, this.table.board, this.table.stack[player]);
-        if (move.replace) {
-            console.log("replace");
-            this.table.updateStack(player,move.letters)
-            console.log("STACK AFTER MOVE", this.table.stack[player]);
-        } else {
-            //console.log("move",move);
-            this.table.applyMove(player, move);
+        const stack = this.table.stack[player];
+
+        // Wykrycie pierwszego ruchu na podstawie stanu planszy (NIE licznika tur,
+        // bo ten rośnie też przy pasach i nieudanych słowach).
+        const isFirstMove = this.table.board.isEmpty();
+        const avaliableMoves = isFirstMove
+            ? this.solver.generateFirstWord(this.table.board, stack)
+            : this.solver.solve(this.table.board, stack);
+
+        // Brak jakiegokolwiek możliwego słowa — spróbuj wymienić, inaczej pasuj.
+        if (!avaliableMoves || avaliableMoves.length === 0) {
+            return this._computerExchangeOrPass(player);
         }
 
-        this.table.board.consolePreviewBoard();
-        console.log(this.table.points);
-        console.log(this.table.bag.lettersBag);
+        const move = this.strategy.getBestMove(avaliableMoves, this.table.board, stack);
+
+        // Strategia zdecydowała o wymianie liter.
+        if (move.replace) {
+            const letters = move.letters || [];
+            if (letters.length > 0 && letters.length <= this.table.bag.getBagSize()) {
+                this.table.replaceLetters(player, letters);
+                this.table.currentTurn += 1; // wymiana też kończy turę!
+                return { passed: false, replaced: true, points: 0, letters };
+            }
+            // Nie da się wymienić (za mało liter w worku) — pas.
+            this.table.currentTurn += 1;
+            return { passed: true, replaced: false, points: 0 };
+        }
+
+        // Położenie słowa — applyMove dodaje punkty i zwiększa currentTurn.
+        const before = this.table.points[player];
+        this.table.applyMove(player, move);
+        const gained = this.table.points[player] - before;
+        return { passed: false, replaced: false, points: gained, wordSimple: move.wordSimple };
+    }
+
+    /**
+     * Pomocnicza: komputer wymienia najmniej użyteczne litery lub pasuje,
+     * gdy nie ma żadnego możliwego ruchu. Zawsze zwiększa currentTurn.
+     * @param {number} player - numer gracza
+     * @returns {{ passed: boolean, replaced: boolean, points: number, letters?: string[] }}
+     * @private
+     */
+    _computerExchangeOrPass(player) {
+        const letters = this.strategy.pickTilesToExchange(this.table.stack[player]);
+        if (letters.length > 0 && letters.length <= this.table.bag.getBagSize()) {
+            this.table.replaceLetters(player, letters);
+            this.table.currentTurn += 1;
+            return { passed: false, replaced: true, points: 0, letters };
+        }
+        this.table.currentTurn += 1;
+        return { passed: true, replaced: false, points: 0 };
     }
 
     /**
@@ -97,7 +134,7 @@ class Game {
         }
 
         const boardTiles = this.table.board.getTiles();
-        const isFirstMove = this.table.currentTurn === 0;
+        const isFirstMove = this.table.board.isEmpty();
 
         // Walidacja: czy pozycje są puste
         for (const t of placedTiles) {

@@ -86,10 +86,32 @@ class GameManager {
             myStack: state.game.table.stack[slot],
             myPoints: state.game.table.points[slot],
             opponentPoints: state.game.table.points[opponentSlot],
+            opponentStackSize: state.game.table.stack[opponentSlot].length,
             bagSize: state.game.table.bag.getBagSize(),
             myTurn: this._currentSlot(state) === slot,
             finished: state.finished,
             opponentConnected: state.type === 'computer' || state.players.length === 2,
+            chat: state.chat,
+        };
+    }
+
+    /**
+     * Buduje stan gry dla WIDZA (tryb komputer vs komputer).
+     * Widz widzi obie podstawki i oba wyniki — to tryb demonstracyjny.
+     * @param {object} state - Stan gry
+     * @returns {object} Stan publiczny dla widza
+     * @private
+     */
+    _buildSpectatorState(state) {
+        const t = state.game.table;
+        return {
+            spectator: true,
+            board: t.board.getBoardState(),
+            racks: [[...t.stack[0]], [...t.stack[1]]],
+            points: [t.points[0], t.points[1]],
+            bagSize: t.bag.getBagSize(),
+            currentSlot: this._currentSlot(state),
+            finished: state.finished,
             chat: state.chat,
         };
     }
@@ -116,19 +138,22 @@ class GameManager {
     }
 
     /**
-     * Wykonuje ruch komputera i zwraca zdobyte punkty.
+     * Wykonuje ruch komputera dla danego slota i zwraca informację o ruchu.
+     * Aktualizuje licznik pasów (passCount) oraz sprawdza koniec gry.
      * @param {object} state - Stan gry
-     * @returns {{points: number}} Punkty zdobyte przez komputer
+     * @param {number} [slot=1] - Slot komputera (w grze vs człowiek = 1; w comp vs comp = aktualny)
+     * @returns {{points: number, passed: boolean, replaced: boolean, wordSimple?: string, letters?: string[]}}
      * @private
      */
-    _doComputerMove(state) {
-        const compSlot = 1;
-        const before = state.game.table.points[compSlot];
-        state.game.computerMove(compSlot);
-        const after = state.game.table.points[compSlot];
-        state.passCount[compSlot] = 0;
+    _doComputerMove(state, slot = 1) {
+        const info = state.game.computerMove(slot);
+        if (info.passed) {
+            state.passCount[slot] += 1;
+        } else {
+            state.passCount[slot] = 0;
+        }
         this._checkGameEnd(state);
-        return { points: after - before };
+        return info;
     }
 
     /**
@@ -202,6 +227,59 @@ class GameManager {
         this.userIndex.set(userId, { gameId, slot: 0 });
 
         return { success: true, gameId, userId };
+    }
+
+    /**
+     * Tworzy nową grę komputer vs komputer (tryb obserwacji).
+     * Twórca jest WIDZEM — gra toczy się automatycznie (krok po kroku steruje serwer).
+     * @returns {Promise<{success: boolean, gameId: string, userId: string, state: object}>}
+     *
+     * @example
+     * const { gameId, userId, state } = await gm.createGameWithCompVsComp();
+     * // serwer cyklicznie woła gm.stepCompVsComp(gameId)
+     */
+    async createGameWithCompVsComp() {
+        await this.dict.ready;
+
+        const gameId = this._generateId();
+        const userId = this._generateId();
+        const game = new Game(this.dict);
+
+        const state = {
+            game, type: 'compcomp', difficulty: null,
+            players: [{ userId, slot: 'spectator' }],
+            started: true, finished: false,
+            chat: [], passCount: [0, 0],
+        };
+
+        this.games.set(gameId, state);
+        this.userIndex.set(userId, { gameId, slot: 'spectator' });
+
+        return { success: true, gameId, userId, state: this._buildSpectatorState(state) };
+    }
+
+    /**
+     * Wykonuje JEDEN ruch w grze komputer vs komputer (dla aktualnego slota).
+     * Serwer wywołuje tę metodę cyklicznie, aby widz oglądał rozgrywkę na żywo.
+     * @param {string} gameId - Identyfikator gry
+     * @returns {{success: boolean, finished?: boolean, lastMove?: object, state?: object}}
+     */
+    stepCompVsComp(gameId) {
+        const state = this.games.get(gameId);
+        if (!state || state.type !== 'compcomp') return { success: false };
+        if (state.finished) {
+            return { success: true, finished: true, state: this._buildSpectatorState(state) };
+        }
+
+        const slot = this._currentSlot(state);
+        const info = this._doComputerMove(state, slot);
+
+        return {
+            success: true,
+            finished: state.finished,
+            lastMove: { slot, ...info },
+            state: this._buildSpectatorState(state),
+        };
     }
 
     /**
@@ -370,7 +448,7 @@ class GameManager {
         const letters = table.stack[r.slot];
 
         let moves;
-        if (table.currentTurn === 0) {
+        if (table.board.isEmpty()) {
             moves = solver.generateFirstWord(table.board, letters);
         } else {
             moves = solver.solve(table.board, letters);

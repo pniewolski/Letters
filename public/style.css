@@ -1,0 +1,364 @@
+/* ═══════════════════════════════════════════════════════════════════════════
+   SCRABBLE – STYLE
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+* { margin: 0; padding: 0; box-sizing: border-box; }
+
+:root {
+    --board-size: min(70vh, 70vw);
+    --cell-size: calc(var(--board-size) / 15);
+    --color-bg: #1a1a2e;
+    --color-surface: #16213e;
+    --color-primary: #0f3460;
+    --color-accent: #e94560;
+    --color-gold: #f5a623;
+    --color-green: #27ae60;
+    --color-text: #eee;
+    --color-muted: #888;
+    --radius: 6px;
+
+    /* Kolory planszy — nadpisywane z /api/config (config.json). */
+    --cell-normal: #2a4a3a;
+    --cell-center: #3a3326;
+    --cell-w2: #5b2a2a;
+    --cell-w3: #7a2b22;
+    --cell-l2: #22405c;
+    --cell-l3: #163a52;
+    --tile-bg: #d4a94a;
+    --tile-current-bg: #f5d76e;
+    --tile-text: #1a1a2e;
+}
+
+body {
+    font-family: 'Segoe UI', system-ui, sans-serif;
+    background: var(--color-bg);
+    color: var(--color-text);
+    min-height: 100vh;
+    overflow-x: hidden;
+}
+
+.hidden { display: none !important; }
+
+/* ═══════════════ EKRANY ═══════════════ */
+.screen { display: none; width: 100%; height: 100vh; }
+.screen.active { display: flex; align-items: center; justify-content: center; }
+
+/* ═══════════════ MENU ═══════════════ */
+.menu-box {
+    background: var(--color-surface);
+    padding: 3rem;
+    border-radius: 12px;
+    text-align: center;
+    min-width: 360px;
+}
+.menu-box h1 { font-size: 2.5rem; margin-bottom: 2rem; }
+.menu-box button {
+    display: block;
+    width: 100%;
+    padding: 14px;
+    margin: 10px 0;
+    font-size: 1.1rem;
+    border: none;
+    border-radius: var(--radius);
+    cursor: pointer;
+    background: var(--color-primary);
+    color: var(--color-text);
+    transition: background .2s;
+}
+.menu-box button:hover { background: var(--color-accent); }
+#join-section { margin-top: 1rem; }
+#join-section input {
+    width: 100%;
+    padding: 10px;
+    margin-bottom: 8px;
+    border-radius: var(--radius);
+    border: 1px solid #555;
+    background: #222;
+    color: #fff;
+    font-size: 1rem;
+}
+.status { margin-top: 1rem; color: var(--color-gold); font-size: .9rem; min-height: 1.4em; }
+
+/* ═══════════════ LAYOUT GRY ═══════════════ */
+#screen-game.active { display: flex; align-items: stretch; }
+.game-layout {
+    display: grid;
+    grid-template-columns: 240px 1fr 220px;
+    width: 100%;
+    height: 100vh;
+    gap: 12px;
+    padding: 12px;
+}
+
+/* ═══════════════ PANEL LEWY ═══════════════ */
+.panel-left {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+.info-box {
+    background: var(--color-surface);
+    border-radius: var(--radius);
+    padding: 14px;
+}
+.player-info { margin-bottom: 8px; }
+.player-info .points { font-weight: bold; font-size: 1.2rem; color: var(--color-gold); }
+.rack-info { color: var(--color-muted); font-size: .85rem; }
+.game-meta { margin-top: 10px; font-size: .9rem; color: var(--color-muted); }
+.game-meta > div { margin: 3px 0; }
+.timer { font-size: 1.1rem; color: var(--color-accent); margin-top: 6px; }
+
+/* Czat */
+.chat-box {
+    flex: 1;
+    background: var(--color-surface);
+    border-radius: var(--radius);
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+}
+.chat-messages {
+    flex: 1;
+    overflow-y: auto;
+    padding: 10px;
+    font-size: .85rem;
+}
+.chat-messages .msg { margin-bottom: 4px; }
+.chat-messages .msg.mine { color: #8cf; }
+.chat-messages .msg.opp { color: #fc8; }
+.chat-input-row { display: flex; border-top: 1px solid #333; }
+.chat-input-row input {
+    flex: 1;
+    background: transparent;
+    border: none;
+    padding: 8px;
+    color: #fff;
+    font-size: .9rem;
+}
+.chat-input-row button {
+    background: var(--color-primary);
+    border: none;
+    color: #fff;
+    padding: 8px 14px;
+    cursor: pointer;
+}
+
+/* ═══════════════ PLANSZA ═══════════════ */
+.board-area {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 12px;
+}
+
+.board {
+    display: grid;
+    grid-template-columns: repeat(15, var(--cell-size));
+    grid-template-rows: repeat(15, var(--cell-size));
+    gap: 1px;
+    background: #333;
+    border: 2px solid #555;
+    border-radius: 4px;
+}
+
+.cell {
+    width: var(--cell-size);
+    height: var(--cell-size);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: calc(var(--cell-size) * 0.5);
+    font-weight: bold;
+    position: relative;
+    background: var(--cell-normal);
+    user-select: none;
+}
+.cell.bonus-w2 { background: var(--cell-w2); }
+.cell.bonus-w3 { background: var(--cell-w3); }
+.cell.bonus-l2 { background: var(--cell-l2); }
+.cell.bonus-l3 { background: var(--cell-l3); }
+.cell.bonus-w2::after, .cell.bonus-w3::after, .cell.bonus-l2::after, .cell.bonus-l3::after {
+    content: attr(data-bonus-label);
+    position: absolute;
+    font-size: calc(var(--cell-size) * 0.22);
+    color: #fff8;
+    bottom: 1px;
+}
+.cell.center { background: var(--cell-center); }
+.cell.center::after { content: '★'; position: absolute; font-size: calc(var(--cell-size) * 0.35); color: #f5a62355; }
+
+.cell.has-letter {
+    background: var(--tile-bg);
+    color: var(--tile-text);
+    border-radius: 3px;
+}
+.cell.has-letter.is-blank { color: #555; }
+.cell.has-current {
+    background: var(--tile-current-bg);
+    color: var(--tile-text);
+    box-shadow: 0 0 4px var(--color-gold);
+    border-radius: 3px;
+}
+.cell.has-current.is-blank { color: #7a6a3a; }
+.cell.drop-target {
+    outline: 2px dashed var(--color-gold);
+    outline-offset: -2px;
+}
+.cell.live-preview-dot {
+    box-shadow: inset 0 0 0 2px var(--color-accent);
+}
+.cell .letter-pts {
+    position: absolute;
+    bottom: 1px;
+    right: 2px;
+    font-size: calc(var(--cell-size) * 0.22);
+    font-weight: normal;
+    color: #1a1a2e99;
+}
+
+/* ═══════════════ STOJAK ═══════════════ */
+.rack-area { margin-top: 8px; }
+.rack {
+    display: flex;
+    gap: 4px;
+    justify-content: center;
+}
+.tile {
+    width: 44px;
+    height: 44px;
+    background: var(--tile-bg);
+    color: var(--tile-text);
+    font-size: 1.3rem;
+    font-weight: bold;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 5px;
+    cursor: grab;
+    position: relative;
+    user-select: none;
+    transition: transform .1s;
+}
+.tile:active { cursor: grabbing; transform: scale(1.1); }
+.tile.selected { outline: 3px solid var(--color-accent); }
+.tile.blank-tile { color: #666; font-style: italic; }
+.tile.disabled { cursor: default; opacity: .85; }
+.rack.rack-drop { outline: 2px dashed var(--color-gold); outline-offset: 4px; border-radius: var(--radius); }
+.tile .tile-pts {
+    position: absolute;
+    bottom: 2px;
+    right: 3px;
+    font-size: .55rem;
+    color: #1a1a2e88;
+}
+
+/* ═══════════════ AKCJE ═══════════════ */
+.actions {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+    justify-content: center;
+}
+.btn-action {
+    padding: 10px 18px;
+    font-size: .95rem;
+    border: none;
+    border-radius: var(--radius);
+    cursor: pointer;
+    background: var(--color-primary);
+    color: #fff;
+    transition: background .2s;
+}
+.btn-action:hover { background: #1a4a80; }
+.btn-action:disabled { opacity: .4; cursor: not-allowed; }
+.btn-green { background: var(--color-green); }
+.btn-green:hover { background: #2ecc71; }
+.btn-hint { background: #8e44ad; }
+.btn-hint:hover { background: #9b59b6; }
+.btn-menu { background: #555; }
+.btn-menu:hover { background: #777; }
+
+/* ═══════════════ TRYB WIDZA (komputer vs komputer) ═══════════════ */
+.spectator-only { display: none; }
+body.mode-spectator .spectator-only { display: block; }
+body.mode-spectator .rack.spectator-only { display: flex; }
+body.mode-spectator #actions .btn-action:not(#btn-menu) { display: none; }
+body.mode-spectator .chat-input-row { display: none; }
+.rack-label { font-size: .8rem; color: var(--color-muted); margin: 6px 0 2px; text-align: center; }
+.rack.active-turn { outline: 2px solid var(--color-green); outline-offset: 4px; border-radius: var(--radius); }
+.chat-messages .msg.system { color: #aaa; }
+
+/* ═══════════════ PANEL PRAWY ═══════════════ */
+.panel-right {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+.hint-box, .live-info {
+    background: var(--color-surface);
+    border-radius: var(--radius);
+    padding: 14px;
+}
+.hint-box h3 { margin-bottom: 8px; font-size: 1rem; }
+.hint-box ul { list-style: none; font-size: .85rem; }
+.hint-box li {
+    padding: 6px 8px;
+    margin: 3px 0;
+    background: #1118;
+    border-radius: 4px;
+    cursor: pointer;
+    transition: background .15s;
+}
+.hint-box li:hover { background: var(--color-accent)33; }
+.hint-box li .hint-pts { color: var(--color-gold); font-weight: bold; }
+
+.live-info h4 { font-size: .9rem; color: var(--color-muted); margin-bottom: 6px; }
+#live-dots { font-size: .8rem; color: var(--color-accent); }
+
+/* ═══════════════ MODAL ═══════════════ */
+.modal {
+    position: fixed;
+    inset: 0;
+    background: #000a;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 1000;
+}
+.modal-content {
+    background: var(--color-surface);
+    padding: 24px;
+    border-radius: 10px;
+    text-align: center;
+}
+.modal-content h3 { margin-bottom: 14px; }
+.blank-grid {
+    display: grid;
+    grid-template-columns: repeat(8, 40px);
+    gap: 4px;
+    justify-content: center;
+}
+.blank-grid button {
+    width: 40px;
+    height: 40px;
+    font-size: 1.1rem;
+    font-weight: bold;
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
+    background: #d4a94a;
+    color: #1a1a2e;
+}
+.blank-grid button:hover { background: #f5d76e; }
+
+/* ═══════════════ RESPONSYWNOŚĆ ═══════════════ */
+@media (max-width: 900px) {
+    .game-layout {
+        grid-template-columns: 1fr;
+        grid-template-rows: auto 1fr auto;
+    }
+    .panel-left, .panel-right { flex-direction: row; flex-wrap: wrap; }
+    :root { --board-size: 90vw; }
+}
+
