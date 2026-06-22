@@ -45,7 +45,7 @@ class Strategy {
      *   - Wymiana: { replace: true, letters: string[] }
      */
     getBestMove(moves, board, stack) {
-        if (this.replaceDecision(moves)) {
+        if (this.replaceDecision(moves, stack)) {
             let replace = this.pickTilesToExchange(stack);
             console.log("!!!!!!!!!!!!!!!! replace", replace);
             return {
@@ -94,7 +94,10 @@ class Strategy {
      * @param {Array<object>} moves - Dostępne ruchy
      * @returns {boolean} true jeśli najlepszy ruch ma za mało punktów
      */
-    replaceDecision(moves) {
+    replaceDecision(moves, stack) {
+        if (stack.length < 7) {
+            return false;
+        }
         if (moves[0].points < this.pointsThreshold) {
             return true;
         } else {
