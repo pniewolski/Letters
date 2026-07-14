@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Scrabble — rozwiąż ze zdjęcia</title>
+    <link rel="stylesheet" href="style.css">
+    <style>
+        .solver-wrap { max-width: 760px; margin: 24px auto; padding: 0 16px; }
+        .solver-card { background: #1f2b24; border: 1px solid #2f4a3a; border-radius: 12px; padding: 20px; margin-bottom: 20px; }
+        .solver-card h1, .solver-card h2 { margin-top: 0; }
+        .drop-zone { border: 2px dashed #3a5a48; border-radius: 10px; padding: 28px; text-align: center; cursor: pointer; transition: background .15s, border-color .15s; }
+        .drop-zone.drag { background: #24382c; border-color: #6fbf8f; }
+        .drop-zone small { display: block; color: #9fb7a8; margin-top: 6px; }
+        #preview { max-width: 100%; max-height: 320px; margin-top: 14px; border-radius: 8px; display: none; }
+        .solver-actions { display: flex; gap: 10px; margin-top: 16px; flex-wrap: wrap; }
+        .solver-actions button { flex: 1; min-width: 140px; }
+        .status { min-height: 22px; }
+        .moves-list { list-style: none; padding: 0; margin: 0; }
+        .moves-list li { padding: 10px 12px; border-bottom: 1px solid #2f4a3a; display: flex; justify-content: space-between; gap: 12px; align-items: baseline; }
+        .moves-list li:first-child { background: #26402f; border-radius: 8px 8px 0 0; }
+        .move-word { font-weight: 700; font-size: 1.05rem; letter-spacing: .5px; }
+        .move-info { color: #b9cabf; font-size: .92rem; }
+        .move-points { font-weight: 700; color: #f5d76e; white-space: nowrap; }
+        .board-preview { font-family: monospace; white-space: pre; background: #16211b; padding: 12px; border-radius: 8px; line-height: 1.25; overflow-x: auto; letter-spacing: 3px; }
+        .rack-preview { font-family: monospace; font-size: 1.1rem; letter-spacing: 4px; }
+        .top-link { display: inline-block; margin-bottom: 12px; color: #8fd0a8; }
+        .spinner { display: none; }
+        .spinner.on { display: inline; }
+    </style>
+</head>
+<body>
+<div class="solver-wrap">
+    <a class="top-link" href="index.html">← Powrót do gry</a>
+
+    <div class="solver-card">
+        <h1>Rozwiąż grę ze zdjęcia</h1>
+        <p class="status">Zrób zdjęcie planszy razem z Twoimi literkami. Aplikacja rozpozna stan gry i podpowie do 20 najlepszych ruchów.</p>
+
+        <div id="drop" class="drop-zone">
+            <strong>Kliknij lub upuść zdjęcie tutaj</strong>
+            <small>JPG / PNG — zdjęcie zostanie przeskalowane do 800 px</small>
+            <input type="file" id="file" accept="image/*" hidden>
+            <img id="preview" alt="Podgląd">
+        </div>
+
+        <div class="solver-actions">
+            <button id="btn-solve" class="btn-action btn-green" disabled>🧩 Rozwiąż</button>
+            <button id="btn-reset" class="btn-action">↩ Wyczyść</button>
+        </div>
+        <p id="status" class="status"></p>
+    </div>
+
+    <div id="result-card" class="solver-card" style="display:none;">
+        <h2>Najlepsze ruchy</h2>
+        <ol id="moves" class="moves-list"></ol>
+
+        <h2 style="margin-top:20px;">Rozpoznany stan</h2>
+        <div>Stojak: <span id="rack" class="rack-preview"></span></div>
+        <div id="board" class="board-preview" style="margin-top:10px;"></div>
+    </div>
+</div>
+
+<script src="js/solver.js"></script>
+</body>
+</html>
+

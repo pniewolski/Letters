@@ -1,0 +1,6 @@
+{
+  "apiUrl": "https://api.openai.com/v1/chat/completions",
+  "apiKey": "WSTAW_SWOJ_KLUCZ_API",
+  "model": "gpt-4o-mini"
+}
+

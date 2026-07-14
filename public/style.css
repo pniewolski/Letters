@@ -66,6 +66,21 @@ body {
     transition: background .2s;
 }
 .menu-box button:hover { background: var(--color-accent); }
+.solver-menu-link {
+    display: block;
+    width: 100%;
+    box-sizing: border-box;
+    padding: 14px;
+    margin: 10px 0;
+    font-size: 1.1rem;
+    border-radius: var(--radius);
+    text-align: center;
+    text-decoration: none;
+    background: var(--color-primary);
+    color: var(--color-text);
+    transition: background .2s;
+}
+.solver-menu-link:hover { background: var(--color-accent); }
 #join-section { margin-top: 1rem; }
 #join-section input {
     width: 100%;

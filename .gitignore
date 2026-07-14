@@ -1,0 +1,5 @@
+node_modules/
+server/ai.config.json
+*.log
+.env
+

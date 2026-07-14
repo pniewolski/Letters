@@ -21,8 +21,10 @@ const path = require('path');
 const fs = require('fs');
 const http = require('http');
 const express = require('express');
+const multer = require('multer');
 const { WebSocketServer } = require('ws');
 const GameManager = require('./game/GameManager');
+const { solveFromImage } = require('./ai/imageSolver');
 
 // ─────────────────────────────────────────────────────────────────────────────
 // KONFIGURACJA
@@ -85,6 +87,58 @@ const wss = new WebSocketServer({ server: httpServer });
 
 /** @type {GameManager} Singleton menedżera gier */
 const gm = new GameManager();
+
+// ─────────────────────────────────────────────────────────────────────────────
+// API: ROZWIĄZYWANIE GRY ZE ZDJĘCIA
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** Upload obrazu w pamięci (bez zapisu na dysk), limit 15 MB. */
+const upload = multer({
+    storage: multer.memoryStorage(),
+    limits: { fileSize: 15 * 1024 * 1024 },
+});
+
+// Obsługa base64 w body JSON (dla wywołań spoza formularza)
+app.use('/api/solve', express.json({ limit: '20mb' }));
+
+/**
+ * Endpoint rozwiązujący grę na podstawie zdjęcia planszy i stojaka.
+ *
+ * Sposoby wysłania obrazu:
+ *  - multipart/form-data z polem plikowym "image"
+ *  - application/json z polem "imageBase64" (może zawierać prefiks data:...)
+ *
+ * Odpowiedź: { success, board, rack, moves: [{ word, orientation, fromLeft, fromTop, points, text }, ...] }
+ */
+app.post('/api/solve', upload.single('image'), async (req, res) => {
+    try {
+        let buffer = null;
+
+        if (req.file && req.file.buffer) {
+            buffer = req.file.buffer;
+        } else if (req.body && req.body.imageBase64) {
+            const b64 = String(req.body.imageBase64).replace(/^data:[^;]+;base64,/, '');
+            buffer = Buffer.from(b64, 'base64');
+        }
+
+        if (!buffer || buffer.length === 0) {
+            return res.status(400).json({ success: false, error: 'Brak obrazu. Wyślij plik w polu "image" lub "imageBase64".' });
+        }
+
+        const limit = Math.min(parseInt(req.query.limit || req.body.limit, 10) || 20, 50);
+
+        await gm.dict.ready; // słownik jest już załadowany, ale na wszelki wypadek
+        const result = await solveFromImage(buffer, gm.dict, {
+            alphabet: CLIENT_CONFIG.alphabet,
+            limit,
+        });
+
+        res.json(result);
+    } catch (err) {
+        console.error('[API /api/solve] Błąd:', err);
+        res.status(500).json({ success: false, error: err.message || 'Błąd wewnętrzny serwera.' });
+    }
+});
 
 /**
  * Mapa: userId -> WebSocket
@@ -539,6 +593,7 @@ async function start() {
     console.log('[Server] Ładowanie słownika...');
     await gm.dict.ready;
     console.log('[Server] Słownik gotowy.');
+    console.log(process.memoryUsage());
 
     httpServer.listen(PORT, () => {
         console.log(`[Server] Scrabble server nasłuchuje na http://localhost:${PORT}`);
