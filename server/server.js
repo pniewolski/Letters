@@ -127,12 +127,15 @@ app.post('/api/solve', upload.single('image'), async (req, res) => {
 
         const limit = Math.min(parseInt(req.query.limit || req.body.limit, 10) || 20, 50);
 
+        console.log(`[API /api/solve] Odebrano zdjęcie (${buffer.length} B), limit=${limit}. Łączę z AI...`);
+
         await gm.dict.ready; // słownik jest już załadowany, ale na wszelki wypadek
         const result = await solveFromImage(buffer, gm.dict, {
             alphabet: CLIENT_CONFIG.alphabet,
             limit,
         });
 
+        console.log(`[API /api/solve] Sukces: ruchów=${result.moves.length}, stojak=[${(result.rack || []).join(' ')}]${result.rackEmpty ? ' (pusty stojak)' : ''}.`);
         res.json(result);
     } catch (err) {
         console.error('[API /api/solve] Błąd:', err);

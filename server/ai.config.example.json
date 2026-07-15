@@ -1,6 +1,20 @@
 {
-  "apiUrl": "https://api.openai.com/v1/chat/completions",
+  "_komentarz": "Zostaw pola provider/apiKey/model na dole. Poniżej gotowe warianty do skopiowania.",
+
+  "_wariant_gemini": {
+    "provider": "gemini",
+    "apiKey": "WSTAW_SWOJ_KLUCZ_GOOGLE_AI_STUDIO",
+    "model": "gemini-flash-latest"
+  },
+  "_wariant_openai": {
+    "provider": "openai",
+    "apiUrl": "https://api.openai.com/v1/chat/completions",
+    "apiKey": "WSTAW_SWOJ_KLUCZ_OPENAI",
+    "model": "gpt-4o-mini"
+  },
+
+  "provider": "gemini",
   "apiKey": "WSTAW_SWOJ_KLUCZ_API",
-  "model": "gpt-4o-mini"
+  "model": "gemini-flash-latest"
 }
 

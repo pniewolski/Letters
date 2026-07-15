@@ -22,6 +22,22 @@
         .move-word { font-weight: 700; font-size: 1.05rem; letter-spacing: .5px; }
         .move-info { color: #b9cabf; font-size: .92rem; }
         .move-points { font-weight: 700; color: #f5d76e; white-space: nowrap; }
+
+        /* Miniplansza graficzna 15x15 */
+        .mini-board { display: grid; grid-template-columns: repeat(15, 1fr); gap: 1px; background: #2f4a3a; border: 1px solid #2f4a3a; border-radius: 8px; width: 100%; max-width: 360px; aspect-ratio: 1 / 1; }
+        .mini-cell { background: #16211b; display: flex; align-items: center; justify-content: center; font-family: monospace; font-size: 11px; line-height: 1; color: #e8f2ec; text-transform: uppercase; user-select: none; }
+        .mini-cell.filled { background: #caa15a; color: #2a1e08; font-weight: 700; }
+        .mini-cell.blank { background: #8fbfa0; color: #123; }
+        .mini-cell.center { box-shadow: inset 0 0 0 1px #6fbf8f; }
+
+        /* Kafelki stojaka */
+        .rack-tiles { display: flex; gap: 6px; flex-wrap: wrap; }
+        .rack-tile { width: 34px; height: 34px; border-radius: 6px; background: #e8d7a8; color: #2a1e08; font-weight: 700; display: flex; align-items: center; justify-content: center; font-size: 1.05rem; box-shadow: 0 2px 3px rgba(0,0,0,.35); }
+        .rack-tile.blank { background: #bcd7c6; color: #123; }
+        .rack-empty { color: #9fb7a8; font-style: italic; }
+        .recognized-grid { display: flex; gap: 24px; flex-wrap: wrap; align-items: flex-start; }
+        .recognized-grid > div { flex: 1; min-width: 200px; }
+        .warn-box { background: #4a3a1f; border: 1px solid #7a5f2f; color: #ffe1a8; border-radius: 8px; padding: 12px 14px; margin-bottom: 16px; }
         .board-preview { font-family: monospace; white-space: pre; background: #16211b; padding: 12px; border-radius: 8px; line-height: 1.25; overflow-x: auto; letter-spacing: 3px; }
         .rack-preview { font-family: monospace; font-size: 1.1rem; letter-spacing: 4px; }
         .top-link { display: inline-block; margin-bottom: 12px; color: #8fd0a8; }
@@ -52,12 +68,22 @@
     </div>
 
     <div id="result-card" class="solver-card" style="display:none;">
-        <h2>Najlepsze ruchy</h2>
-        <ol id="moves" class="moves-list"></ol>
+        <div id="warn" class="warn-box" style="display:none;"></div>
 
-        <h2 style="margin-top:20px;">Rozpoznany stan</h2>
-        <div>Stojak: <span id="rack" class="rack-preview"></span></div>
-        <div id="board" class="board-preview" style="margin-top:10px;"></div>
+        <h2>Rozpoznany stan</h2>
+        <div class="recognized-grid">
+            <div>
+                <div style="margin-bottom:6px; color:#b9cabf;">Plansza (15×15)</div>
+                <div id="mini-board" class="mini-board"></div>
+            </div>
+            <div>
+                <div style="margin-bottom:6px; color:#b9cabf;">Twój stojak</div>
+                <div id="rack" class="rack-tiles"></div>
+            </div>
+        </div>
+
+        <h2 style="margin-top:20px;">Najlepsze ruchy</h2>
+        <ol id="moves" class="moves-list"></ol>
     </div>
 </div>
 

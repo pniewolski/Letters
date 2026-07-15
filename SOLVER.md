@@ -15,9 +15,38 @@ Serwer działa cały czas w tle, więc słownik nie jest ładowany przy każdym 
 
 ## Konfiguracja modelu
 
-Ustaw dane dostępowe na jeden z dwóch sposobów:
+Obsługiwani są dwaj dostawcy — **OpenAI** oraz **Google Gemini** (natywne API).
+Dostawca jest wykrywany automatycznie na podstawie nazwy modelu (`gemini*` → Gemini)
+lub można go wymusić polem/zmienną `provider` (`openai` | `gemini`).
 
-**A) Zmienne środowiskowe** (zalecane produkcyjnie):
+### Gemini (Google AI Studio) — testowane
+
+Klucz z Google AI Studio (np. `AQ.Ab8RN...`) działa z **natywnym API generateContent**
+i nagłówkiem `X-goog-api-key` — dlatego NIE używaj tu formatu OpenAI (`Bearer`),
+inaczej dostaniesz **401**.
+
+**A) Zmienne środowiskowe:**
+```powershell
+$env:AI_PROVIDER = "gemini"
+$env:AI_API_KEY  = "AQ.Ab8RN..."
+$env:AI_MODEL    = "gemini-flash-latest"   # lub gemini-2.5-flash / -lite
+node server/server.js
+```
+
+**B) Plik `server/ai.config.json`:**
+```json
+{
+  "provider": "gemini",
+  "apiKey": "AQ.Ab8RN...",
+  "model": "gemini-flash-latest"
+}
+```
+URL nie jest potrzebny — domyślnie
+`https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent`.
+
+### OpenAI
+
+**A) Zmienne środowiskowe:**
 ```powershell
 $env:AI_API_KEY = "sk-..."
 $env:AI_MODEL   = "gpt-4o-mini"           # opcjonalnie
@@ -25,19 +54,19 @@ $env:AI_API_URL = "https://api.openai.com/v1/chat/completions"  # opcjonalnie
 node server/server.js
 ```
 
-**B) Plik `server/ai.config.json`** (skopiuj z `server/ai.config.example.json`):
+**B) Plik `server/ai.config.json`:**
 ```json
 {
+  "provider": "openai",
   "apiUrl": "https://api.openai.com/v1/chat/completions",
   "apiKey": "sk-...",
   "model": "gpt-4o-mini"
 }
 ```
-Plik `server/ai.config.json` jest w `.gitignore` (nie trafi do repo).
 
-Endpoint jest zgodny z **OpenAI Chat Completions**, więc działa też z każdą usługą
-kompatybilną z tym API (OpenRouter, Google Gemini w trybie OpenAI-compat, itp.) —
-wystarczy zmienić `apiUrl` i `model`.
+Plik `server/ai.config.json` jest w `.gitignore` (nie trafi do repo).
+Skopiuj go z `server/ai.config.example.json`. Obu dostawców można używać wymiennie —
+wystarczy zmienić `provider` + `apiKey` + `model`.
 
 ## Który model wybrać (najtaniej)
 

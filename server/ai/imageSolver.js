@@ -11,10 +11,16 @@
  * 4. Ruchy są formatowane do czytelnej postaci: SŁOWO, poziomo/pionowo, od lewej X, od góry Y.
  *
  * Konfiguracja modelu (zmienne środowiskowe lub server/ai.config.json):
- *   AI_API_URL   — endpoint zgodny z OpenAI Chat Completions
- *                  (domyślnie https://api.openai.com/v1/chat/completions)
+ *   AI_PROVIDER  — "openai" | "gemini" (domyślnie wykrywany automatycznie
+ *                  na podstawie AI_MODEL / AI_API_URL)
+ *   AI_API_URL   — endpoint. Dla OpenAI: pełny URL chat/completions.
+ *                  Dla Gemini: baza modeli (domyślnie
+ *                  https://generativelanguage.googleapis.com/v1beta/models)
  *   AI_API_KEY   — klucz API
- *   AI_MODEL     — nazwa modelu (domyślnie gpt-4o-mini)
+ *   AI_MODEL     — nazwa modelu (domyślnie gpt-4o-mini; np. gemini-flash-latest)
+ *
+ * Obaj dostawcy są wymienni — wystarczy podać klucz i model. Gemini korzysta
+ * z natywnego API generateContent (nagłówek X-goog-api-key), OpenAI z Bearer.
  */
 
 const fs = require('fs');
@@ -28,14 +34,40 @@ const Solver = require('../board/Solver');
 const SIZE = 15;
 const MAX_DIM = 800;
 
+const OPENAI_DEFAULT_URL = 'https://api.openai.com/v1/chat/completions';
+const GEMINI_DEFAULT_URL = 'https://generativelanguage.googleapis.com/v1beta/models';
+
+/** Prosty log z prefiksem i znacznikiem czasu. */
+function log(...args) {
+    console.log(`[imageSolver ${new Date().toISOString()}]`, ...args);
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // KONFIGURACJA MODELU
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**
+ * Wykrywa dostawcę na podstawie jawnego ustawienia, nazwy modelu lub URL-a.
+ * @param {string} explicit - Jawnie podany provider ('openai'|'gemini'|'')
+ * @param {string} model
+ * @param {string} apiUrl
+ * @returns {'openai'|'gemini'}
+ */
+function detectProvider(explicit, model, apiUrl) {
+    const e = (explicit || '').toLowerCase();
+    if (e === 'openai' || e === 'gemini') return e;
+    const m = (model || '').toLowerCase();
+    const u = (apiUrl || '').toLowerCase();
+    if (m.startsWith('gemini') || u.includes('generativelanguage.googleapis.com')) {
+        return 'gemini';
+    }
+    return 'openai';
+}
+
+/**
  * Wczytuje konfigurację modelu AI: najpierw ze zmiennych środowiskowych,
  * a brakujące wartości uzupełnia z opcjonalnego pliku server/ai.config.json.
- * @returns {{apiUrl: string, apiKey: string, model: string}}
+ * @returns {{provider: 'openai'|'gemini', apiUrl: string, apiKey: string, model: string}}
  */
 function loadAiConfig() {
     let fileCfg = {};
@@ -48,10 +80,18 @@ function loadAiConfig() {
         console.warn('[imageSolver] Nie udało się wczytać ai.config.json:', e.message);
     }
 
+    const model = process.env.AI_MODEL || fileCfg.model || 'gpt-4o-mini';
+    const explicitProvider = process.env.AI_PROVIDER || fileCfg.provider || '';
+    const rawUrl = process.env.AI_API_URL || fileCfg.apiUrl || '';
+    const provider = detectProvider(explicitProvider, model, rawUrl);
+
+    const apiUrl = rawUrl || (provider === 'gemini' ? GEMINI_DEFAULT_URL : OPENAI_DEFAULT_URL);
+
     return {
-        apiUrl: process.env.AI_API_URL || fileCfg.apiUrl || 'https://api.openai.com/v1/chat/completions',
+        provider,
+        apiUrl,
         apiKey: process.env.AI_API_KEY || fileCfg.apiKey || '',
-        model: process.env.AI_MODEL || fileCfg.model || 'gpt-4o-mini',
+        model,
     };
 }
 
@@ -136,6 +176,7 @@ function extractJson(text) {
 
 /**
  * Wysyła obraz do modelu wizyjnego i zwraca rozpoznany stan gry.
+ * Wybiera dostawcę (OpenAI vs Gemini) na podstawie konfiguracji.
  * @param {Buffer} imageBuffer - Obraz (najlepiej już przeskalowany)
  * @param {string} mime - Typ MIME obrazu (np. image/jpeg)
  * @param {string} alphabet - Alfabet gry
@@ -147,7 +188,34 @@ async function callVisionModel(imageBuffer, mime, alphabet) {
         throw new Error('Brak klucza API modelu. Ustaw AI_API_KEY lub server/ai.config.json.');
     }
 
-    const dataUrl = `data:${mime};base64,${imageBuffer.toString('base64')}`;
+    const prompt = buildPrompt(alphabet);
+    const base64 = imageBuffer.toString('base64');
+
+    log(`Łączenie z modelem AI: provider=${cfg.provider}, model=${cfg.model}`);
+    const t0 = Date.now();
+    try {
+        const result = cfg.provider === 'gemini'
+            ? await callGemini(cfg, prompt, mime, base64, alphabet)
+            : await callOpenAi(cfg, prompt, mime, base64, alphabet);
+        log(`Połączenie z AI OK (${Date.now() - t0} ms) — rozpoznano stan gry.`);
+        return result;
+    } catch (e) {
+        log(`Błąd połączenia z AI (${Date.now() - t0} ms): ${e.message}`);
+        throw e;
+    }
+}
+
+/**
+ * Wywołuje model zgodny z OpenAI Chat Completions (Bearer auth).
+ * @param {object} cfg
+ * @param {string} prompt
+ * @param {string} mime
+ * @param {string} base64
+ * @param {string} alphabet
+ * @returns {Promise<{board: string[], rack: string[]}>}
+ */
+async function callOpenAi(cfg, prompt, mime, base64, alphabet) {
+    const dataUrl = `data:${mime};base64,${base64}`;
 
     const body = {
         model: cfg.model,
@@ -155,7 +223,7 @@ async function callVisionModel(imageBuffer, mime, alphabet) {
         max_tokens: 1500,
         response_format: { type: 'json_object' },
         messages: [
-            { role: 'system', content: buildPrompt(alphabet) },
+            { role: 'system', content: prompt },
             {
                 role: 'user',
                 content: [
@@ -175,9 +243,10 @@ async function callVisionModel(imageBuffer, mime, alphabet) {
         body: JSON.stringify(body),
     });
 
+    log(`OpenAI odpowiedział: HTTP ${resp.status} ${resp.statusText}`);
     if (!resp.ok) {
         const errText = await resp.text().catch(() => '');
-        throw new Error(`Błąd modelu (${resp.status}): ${errText.slice(0, 500)}`);
+        throw new Error(`Błąd modelu OpenAI (${resp.status}): ${errText.slice(0, 500)}`);
     }
 
     const json = await resp.json();
@@ -186,6 +255,70 @@ async function callVisionModel(imageBuffer, mime, alphabet) {
         : null;
 
     const parsed = extractJson(typeof content === 'string' ? content : JSON.stringify(content));
+    return normalizeAiData(parsed, alphabet);
+}
+
+/**
+ * Wywołuje natywne API Google Gemini (generateContent, nagłówek X-goog-api-key).
+ * @param {object} cfg
+ * @param {string} prompt
+ * @param {string} mime
+ * @param {string} base64
+ * @param {string} alphabet
+ * @returns {Promise<{board: string[], rack: string[]}>}
+ */
+async function callGemini(cfg, prompt, mime, base64, alphabet) {
+    // cfg.apiUrl to baza modeli; dołączamy {model}:generateContent.
+    // Obsłuż też sytuację, gdy ktoś poda pełny URL z ':generateContent'.
+    let url = cfg.apiUrl;
+    if (!/:generateContent/.test(url)) {
+        url = `${url.replace(/\/+$/, '')}/${encodeURIComponent(cfg.model)}:generateContent`;
+    }
+
+    const body = {
+        contents: [
+            {
+                role: 'user',
+                parts: [
+                    { text: `${prompt}\n\nRozpoznaj planszę i stojak z tego zdjęcia.` },
+                    { inline_data: { mime_type: mime, data: base64 } },
+                ],
+            },
+        ],
+        generationConfig: {
+            temperature: 0,
+            responseMimeType: 'application/json',
+        },
+    };
+
+    const resp = await fetch(url, {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+            'X-goog-api-key': cfg.apiKey,
+        },
+        body: JSON.stringify(body),
+    });
+
+    log(`Gemini odpowiedział: HTTP ${resp.status} ${resp.statusText}`);
+    if (!resp.ok) {
+        const errText = await resp.text().catch(() => '');
+        throw new Error(`Błąd modelu Gemini (${resp.status}): ${errText.slice(0, 500)}`);
+    }
+
+    const json = await resp.json();
+    const cand = json.candidates && json.candidates[0];
+    const parts = cand && cand.content && Array.isArray(cand.content.parts)
+        ? cand.content.parts
+        : [];
+    const content = parts.map(p => (p && typeof p.text === 'string' ? p.text : '')).join('');
+
+    if (!content) {
+        const reason = cand && cand.finishReason ? ` (finishReason: ${cand.finishReason})` : '';
+        throw new Error(`Gemini nie zwrócił treści${reason}.`);
+    }
+
+    const parsed = extractJson(content);
     return normalizeAiData(parsed, alphabet);
 }
 
@@ -359,15 +492,36 @@ async function solveFromImage(imageBuffer, dict, opts = {}) {
     const alphabet = opts.alphabet || 'AĄBCĆDEĘFGHIJKLŁMNŃOÓPRSŚTUWYZŹŻ';
     const limit = opts.limit || 20;
 
+    log(`Start: obraz ${imageBuffer.length} B, limit ruchów=${limit}`);
     const resized = await resizeImage(imageBuffer);
+    log(`Obraz przeskalowany do ${resized.width}x${resized.height} px (${resized.buffer.length} B).`);
+
     const recognized = await callVisionModel(resized.buffer, resized.mime, alphabet);
+    log(`Rozpoznany stojak: [${recognized.rack.join(' ') || '—'}]`);
+
     const board = buildBoard(recognized.board);
+
+    // Zdjęcie samej planszy (bez liter gracza) — nie da się policzyć ruchów.
+    if (!recognized.rack.length) {
+        log('Brak liter na stojaku — prawdopodobnie zdjęcie samej planszy.');
+        return {
+            success: true,
+            board: recognized.board,
+            rack: recognized.rack,
+            rackEmpty: true,
+            warning: 'Nie wykryto liter na Twoim stojaku. Zrób zdjęcie planszy RAZEM z Twoimi literkami — bez nich nie policzę ruchów.',
+            moves: [],
+        };
+    }
+
     const moves = solveTopMoves(board, recognized.rack, dict, limit);
+    log(`Gotowe: znaleziono ${moves.length} ruchów.`);
 
     return {
         success: true,
         board: recognized.board,
         rack: recognized.rack,
+        rackEmpty: false,
         moves,
     };
 }
