@@ -32,7 +32,7 @@ const Board = require('../board/Board');
 const Solver = require('../board/Solver');
 
 const SIZE = 15;
-const MAX_DIM = 800;
+const MAX_DIM = 800; // Wyższa rozdzielczość = lepszy OCR kafelków (15x15 → ~80px/pole)
 
 const OPENAI_DEFAULT_URL = 'https://api.openai.com/v1/chat/completions';
 const GEMINI_DEFAULT_URL = 'https://generativelanguage.googleapis.com/v1beta/models';
@@ -132,8 +132,15 @@ function buildPrompt(alphabet) {
     return [
         'Jesteś ekspertem rozpoznawania planszy do gry w Scrabble ze zdjęcia.',
         'Na obrazie widnieje plansza 15x15 oraz stojak (rack) z literami gracza.',
+        'UWAGA: Gra jest w toku — na planszy NA PEWNO leżą litery. Jeśli widzisz pustą planszę, przyjrzyj się dokładniej kafelkom na siatce.',
         '',
-        `Dozwolone litery (alfabet): ${alphabet}`,
+        'Jak rozpoznać elementy na zdjęciu:',
+        '- Plansza to kwadratowa siatka 15x15 pól. Kafelki z literami to jasne/beżowe prostokąty z literą i małą liczbą (wartość punktowa).',
+        '- Puste pola planszy to kolorowe kwadraty (premium squares) lub puste beżowe/zielone pola.',
+        '- Stojak gracza to rząd 7 (lub mniej) kafelków poniżej planszy lub w dolnej części zdjęcia.',
+        '- Każdy kafelek ma JEDNĄ literę (duża, wyraźna) i małą cyfrę w rogu (punkty) — odczytaj LITERĘ, zignoruj cyfrę.',
+        '',
+        `Dozwolone litery w tej grze (polski alfabet): ${alphabet}`,
         '',
         'Zwróć WYŁĄCZNIE obiekt JSON w formacie:',
         '{',
@@ -146,12 +153,13 @@ function buildPrompt(alphabet) {
         '- Znak o indeksie i w łańcuchu to kolumna i (od lewej), licząc od 0.',
         '- Puste pole = kropka ".".',
         '- Zwykła litera = WIELKA litera z alfabetu.',
-        '- Blank (pusty żeton) użyty jako litera = ta sama litera, ale MAŁA.',
+        '- Blank (pusty żeton użyty jako litera) = ta sama litera, ale MAŁA.',
         '',
         'Zasady stojaka (rack):',
         '- Podaj litery WIELKIMI literami.',
         '- Pusty żeton (blank) w stojaku zapisz jako gwiazdkę "*".',
         '',
+        'WAŻNE: Dokładnie przeanalizuj KAŻDE pole planszy 15x15. Na planszy powinny być słowa ułożone poziomo i pionowo. Nie zwracaj pustej planszy jeśli widzisz kafelki z literami.',
         'Nie dodawaj komentarzy ani markdown. Zwróć czysty JSON.',
     ].join('\n');
 }
@@ -216,25 +224,47 @@ async function callVisionModel(imageBuffer, mime, alphabet) {
  */
 async function callOpenAi(cfg, prompt, mime, base64, alphabet) {
     const dataUrl = `data:${mime};base64,${base64}`;
+    const modelName = String(cfg.model || '').toLowerCase();
+    const isReasoning = modelName.startsWith('gpt-5') || modelName.startsWith('o1') || modelName.startsWith('o3');
+    const tokenParam = isReasoning ? 'max_completion_tokens' : 'max_tokens';
+    // Modele rozumujące (GPT-5, o1, o3) używają reasoning tokens — potrzebują więcej limitu
+    const tokenLimit = isReasoning ? 16000 : 1500;
 
-    const body = {
-        model: cfg.model,
-        temperature: 0,
-        max_tokens: 1500,
-        response_format: { type: 'json_object' },
-        messages: [
+    // Modele rozumujące:
+    //  - nie wspierają temperature
+    //  - nie wspierają response_format: json_object
+    //  - rola "system" → "developer"
+    //  - trzeba wymusić JSON instrukcją w promptcie
+    const messages = isReasoning
+        ? [
+            { role: 'developer', content: prompt + '\n\nODPOWIEDZ WYŁĄCZNIE CZYSTYM OBIEKTEM JSON, BEZ MARKDOWN, BEZ KOMENTARZY.' },
+            {
+                role: 'user',
+                content: [
+                    { type: 'text', text: 'Rozpoznaj planszę i stojak z tego zdjęcia. Zwróć TYLKO JSON.' },
+                    { type: 'image_url', image_url: { url: dataUrl, detail: 'high' } },
+                ],
+            },
+        ]
+        : [
             { role: 'system', content: prompt },
             {
                 role: 'user',
                 content: [
                     { type: 'text', text: 'Rozpoznaj planszę i stojak z tego zdjęcia.' },
-                    { type: 'image_url', image_url: { url: dataUrl } },
+                    { type: 'image_url', image_url: { url: dataUrl, detail: 'high' } },
                 ],
             },
-        ],
+        ];
+
+    const body = {
+        model: cfg.model,
+        ...(isReasoning ? {} : { temperature: 0, response_format: { type: 'json_object' } }),
+        [tokenParam]: tokenLimit,
+        messages,
     };
 
-    const resp = await fetch(cfg.apiUrl, {
+    let resp = await fetch(cfg.apiUrl, {
         method: 'POST',
         headers: {
             'Content-Type': 'application/json',
@@ -243,6 +273,28 @@ async function callOpenAi(cfg, prompt, mime, base64, alphabet) {
         body: JSON.stringify(body),
     });
 
+    // Fallback kompatybilności: część modeli OpenAI wymaga max_completion_tokens.
+    if (!resp.ok && tokenParam === 'max_tokens') {
+        const errText = await resp.text().catch(() => '');
+        if (resp.status === 400 && /max_completion_tokens/i.test(errText)) {
+            log('OpenAI zwrócił unsupported_parameter dla max_tokens; ponawiam z max_completion_tokens.');
+            const retryBody = { ...body };
+            delete retryBody.max_tokens;
+            retryBody.max_completion_tokens = tokenLimit;
+
+            resp = await fetch(cfg.apiUrl, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${cfg.apiKey}`,
+                },
+                body: JSON.stringify(retryBody),
+            });
+        } else {
+            throw new Error(`Błąd modelu OpenAI (${resp.status}): ${errText.slice(0, 500)}`);
+        }
+    }
+
     log(`OpenAI odpowiedział: HTTP ${resp.status} ${resp.statusText}`);
     if (!resp.ok) {
         const errText = await resp.text().catch(() => '');
@@ -250,12 +302,139 @@ async function callOpenAi(cfg, prompt, mime, base64, alphabet) {
     }
 
     const json = await resp.json();
-    const content = json.choices && json.choices[0] && json.choices[0].message
-        ? json.choices[0].message.content
-        : null;
+
+    // Log zużycia tokenów (szczególnie ważne dla modeli rozumujących)
+    if (json.usage) {
+        const u = json.usage;
+        const reasoning = (u.completion_tokens_details && u.completion_tokens_details.reasoning_tokens) || 0;
+        log(`OpenAI tokeny: input=${u.prompt_tokens}, output=${u.completion_tokens} (reasoning=${reasoning}), razem=${u.total_tokens}`);
+    }
+
+    // Dla modeli rozumujących: loguj surową odpowiedź (debug)
+    if (isReasoning) {
+        const choice0 = json.choices && json.choices[0];
+        log(`OpenAI [reasoning debug] finish_reason=${choice0 && choice0.finish_reason}`);
+        log(`OpenAI [reasoning debug] message keys=${choice0 && choice0.message ? Object.keys(choice0.message).join(',') : 'brak'}`);
+        log(`OpenAI [reasoning debug] content (pierwsze 200 zn.)=${choice0 && choice0.message && JSON.stringify(choice0.message.content || '').slice(0, 200)}`);
+        // Sprawdź czy jest pole 'reasoning' lub inne nowe pola
+        if (choice0 && choice0.message) {
+            const extraKeys = Object.keys(choice0.message).filter(k => !['role','content','refusal','annotations'].includes(k));
+            if (extraKeys.length) log(`OpenAI [reasoning debug] dodatkowe pola w message: ${extraKeys.join(', ')}`);
+        }
+    }
+
+    // GPT-4: choices[0].message.content
+    // GPT-5 (Responses API / nowy format): output[].content[].text lub output_text
+    let content = null;
+
+    // Klasyczny format (Chat Completions)
+    if (json.choices && json.choices[0] && json.choices[0].message) {
+        const msg = json.choices[0].message.content;
+        if (msg && msg.trim()) content = msg;
+    }
+    // GPT-5 nowy format: output_text (skrótowa forma)
+    if (!content && json.output_text) {
+        content = json.output_text;
+    }
+    // GPT-5 nowy format: output[].content[].text
+    if (!content && Array.isArray(json.output)) {
+        for (const item of json.output) {
+            if (item.type === 'message' && Array.isArray(item.content)) {
+                for (const part of item.content) {
+                    if (part.type === 'output_text' || part.type === 'text') {
+                        content = part.text || part.content || '';
+                        break;
+                    }
+                }
+            }
+            if (content) break;
+        }
+    }
+
+    if (!content) {
+        log('OpenAI — nie znaleziono treści w odpowiedzi. Klucze:', Object.keys(json).join(', '));
+        log('OpenAI — surowa odpowiedź (pierwsze 1500 zn.):', JSON.stringify(json).slice(0, 1500));
+
+        // Dla modeli rozumujących: spróbuj Responses API jako fallback
+        if (isReasoning) {
+            log('OpenAI — próbuję Responses API (/v1/responses) jako fallback...');
+            content = await callOpenAiResponses(cfg, prompt, mime, base64);
+        }
+
+        if (!content) {
+            throw new Error('Pusta odpowiedź modelu OpenAI — model nie zwrócił rozpoznanej planszy.');
+        }
+    }
 
     const parsed = extractJson(typeof content === 'string' ? content : JSON.stringify(content));
     return normalizeAiData(parsed, alphabet);
+}
+
+/**
+ * Fallback: wywołuje OpenAI Responses API (nowy endpoint dla modeli rozumujących).
+ * @param {object} cfg
+ * @param {string} prompt
+ * @param {string} mime
+ * @param {string} base64
+ * @returns {Promise<string|null>}
+ */
+async function callOpenAiResponses(cfg, prompt, mime, base64) {
+    const url = cfg.apiUrl.replace('/chat/completions', '/responses');
+    const dataUrl = `data:${mime};base64,${base64}`;
+
+    const body = {
+        model: cfg.model,
+        max_output_tokens: 4000,
+        input: [
+            { role: 'developer', content: prompt + '\n\nODPOWIEDZ WYŁĄCZNIE CZYSTYM OBIEKTEM JSON, BEZ MARKDOWN, BEZ KOMENTARZY.' },
+            {
+                role: 'user',
+                content: [
+                    { type: 'input_text', text: 'Rozpoznaj planszę i stojak z tego zdjęcia. Zwróć TYLKO JSON.' },
+                    { type: 'input_image', image_url: dataUrl },
+                ],
+            },
+        ],
+    };
+
+    const resp = await fetch(url, {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${cfg.apiKey}`,
+        },
+        body: JSON.stringify(body),
+    });
+
+    log(`OpenAI Responses API: HTTP ${resp.status} ${resp.statusText}`);
+    if (!resp.ok) {
+        const errText = await resp.text().catch(() => '');
+        log(`OpenAI Responses API błąd: ${errText.slice(0, 500)}`);
+        return null;
+    }
+
+    const json = await resp.json();
+
+    // Responses API format: output_text lub output[].content[].text
+    if (json.output_text && json.output_text.trim()) {
+        log(`OpenAI Responses API — otrzymano output_text (${json.output_text.length} zn.)`);
+        return json.output_text;
+    }
+    if (Array.isArray(json.output)) {
+        for (const item of json.output) {
+            if (item.type === 'message' && Array.isArray(item.content)) {
+                for (const part of item.content) {
+                    if ((part.type === 'output_text' || part.type === 'text') && part.text && part.text.trim()) {
+                        log(`OpenAI Responses API — otrzymano output[].content[].text (${part.text.length} zn.)`);
+                        return part.text;
+                    }
+                }
+            }
+        }
+    }
+
+    log('OpenAI Responses API — brak treści. Surowa odp.:', JSON.stringify(json).slice(0, 1000));
+    return null;
 }
 
 /**

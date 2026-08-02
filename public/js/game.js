@@ -45,15 +45,28 @@ export function showGame() {
         dom.oppRackInfo.style.display = '';
     }
 
+    updatePlayerLabels();
+
     buildBoard();
     renderGame();
     startClock();
+}
+
+/** Ustawia etykiety graczy na podstawie imion ze stanu gry (gra sieciowa). */
+function updatePlayerLabels() {
+    if (state.gameMode !== 'human') return;
+    const g = state.gameState;
+    if (!g) return;
+    if (g.myName) dom.myLabel.textContent = `${g.myName}:`;
+    if (g.opponentName) dom.oppLabel.textContent = `${g.opponentName}:`;
 }
 
 /** Renderuje pełny stan gry (info + plansza + stojak + przyciski). */
 export function renderGame() {
     const g = state.gameState;
     if (!g) return;
+
+    updatePlayerLabels();
 
     if (g.spectator) {
         dom.myPoints.textContent = g.points[0];

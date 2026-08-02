@@ -23,6 +23,21 @@ function handleMessage(msg) {
             console.log(msg.message);
             break;
 
+        case 'hostGame:response':
+            if (msg.success) {
+                state.gameId = msg.gameId;
+                state.userId = msg.userId;
+                state.mySlot = 0;
+                dom.menuStatus.textContent = 'Gra utworzona — oczekiwanie na przeciwnika...';
+            } else {
+                dom.menuStatus.textContent = msg.error || 'Nie udało się utworzyć gry';
+            }
+            break;
+
+        case 'lobby':
+            renderLobby(msg.games);
+            break;
+
         case 'createGame:response':
             if (msg.success) {
                 state.gameId = msg.gameId;
@@ -180,19 +195,60 @@ function initMenu() {
     $('#btn-vs-human').onclick = () => {
         state.gameMode = 'human';
         dom.joinSection.classList.remove('hidden');
-        dom.menuStatus.textContent = 'Wklej kod aby dołączyć, lub kliknij „Dołącz / Stwórz pokój" z pustym polem';
+        dom.menuStatus.textContent = 'Wpisz imię i kliknij „Hostuj grę", albo dołącz do gracza z listy poniżej.';
+        wsSend({ type: 'listLobby' });
     };
 
-    $('#btn-join').onclick = () => {
-        const id = dom.inputGameId.value.trim();
-        if (!id) {
-            dom.menuStatus.textContent = 'Tworzenie pokoju...';
-            wsSend({ type: 'createGame', mode: 'human' });
-        } else {
-            dom.menuStatus.textContent = 'Dołączanie...';
-            wsSend({ type: 'joinGame', gameId: id });
+    dom.btnHost.onclick = () => {
+        const name = (dom.inputPlayerName.value || '').trim();
+        if (!name) {
+            dom.menuStatus.textContent = 'Podaj swoje imię przed hostowaniem gry.';
+            return;
         }
+        state.gameMode = 'human';
+        state.playerName = name;
+        dom.menuStatus.textContent = 'Hostowanie gry — oczekiwanie na przeciwnika...';
+        wsSend({ type: 'hostGame', name });
     };
+}
+
+/** Renderuje listę graczy oczekujących online. */
+function renderLobby(games) {
+    const list = dom.onlineList;
+    if (!list) return;
+    list.innerHTML = '';
+
+    const others = (games || []).filter(g => g.gameId !== state.gameId);
+    if (others.length === 0) {
+        const li = document.createElement('li');
+        li.className = 'online-empty';
+        li.textContent = 'Nikt jeszcze nie hostuje gry.';
+        list.appendChild(li);
+        return;
+    }
+
+    for (const g of others) {
+        const li = document.createElement('li');
+        li.className = 'online-host';
+        li.innerHTML =
+            `<span class="online-host-name">${escapeHtml(g.name)}</span>` +
+            `<span class="online-join-hint">Dołącz ▶</span>`;
+        li.onclick = () => {
+            const name = (dom.inputPlayerName.value || '').trim() || 'Gracz';
+            state.gameMode = 'human';
+            state.playerName = name;
+            dom.menuStatus.textContent = `Dołączanie do gry gracza ${g.name}...`;
+            wsSend({ type: 'joinGame', gameId: g.gameId, name });
+        };
+        list.appendChild(li);
+    }
+}
+
+/** Prosta sanityzacja tekstu do wstawienia w HTML. */
+function escapeHtml(s) {
+    return String(s).replace(/[&<>"']/g, c => (
+        { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]
+    ));
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

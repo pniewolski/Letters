@@ -21,6 +21,8 @@ export function buildBoard() {
     dom.board.innerHTML = '';
     const layout = CONFIG.boardLayout;
 
+    buildCoordLabels();
+
     for (let y = 0; y < 15; y++) {
         for (let x = 0; x < 15; x++) {
             const cell = document.createElement('div');
@@ -41,6 +43,24 @@ export function buildBoard() {
 
             dom.board.appendChild(cell);
         }
+    }
+}
+
+/** Buduje pasy etykiet: kolumny A–O (góra) oraz wiersze 1–15 (lewo). */
+function buildCoordLabels() {
+    if (!dom.colLabels || !dom.rowLabels) return;
+    dom.colLabels.innerHTML = '';
+    dom.rowLabels.innerHTML = '';
+    for (let i = 0; i < 15; i++) {
+        const col = document.createElement('div');
+        col.className = 'coord-label';
+        col.textContent = String.fromCharCode(65 + i); // A..O
+        dom.colLabels.appendChild(col);
+
+        const row = document.createElement('div');
+        row.className = 'coord-label';
+        row.textContent = String(i + 1); // 1..15
+        dom.rowLabels.appendChild(row);
     }
 }
 

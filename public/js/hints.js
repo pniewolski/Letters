@@ -7,6 +7,7 @@
 import { dom } from './dom.js';
 import { state } from './state.js';
 import { wsSend } from './net.js';
+import { coordLabel } from './config.js';
 
 /** Prosi serwer o podpowiedzi. */
 export function requestHint() {
@@ -28,7 +29,7 @@ export function showHints(hints) {
 
     hints.forEach((h) => {
         const li = document.createElement('li');
-        li.innerHTML = `<span class="hint-pts">${h.points}</span> ${h.wordSimple} (${h.x},${h.y} ${h.horizontal ? '→' : '↓'})`;
+        li.innerHTML = `<span class="hint-pts">${h.points}</span> ${h.wordSimple} (${coordLabel(h.x, h.y)} ${h.horizontal ? '→' : '↓'})`;
         li.onclick = () => applyHint(h);
         dom.hintList.appendChild(li);
     });

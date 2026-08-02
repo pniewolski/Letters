@@ -18,8 +18,13 @@
     const miniBoardEl = document.getElementById('mini-board');
     const warnEl = document.getElementById('warn');
 
-    const MAX_DIM = 800;
+    const MAX_DIM = 1200;
     let selectedDataUrl = null;
+
+    /** Zamienia współrzędne 0-based (x=kolumna, y=wiersz) na etykietę A5. */
+    function coordLabel(x, y) {
+        return `${String.fromCharCode(65 + x)}${y + 1}`;
+    }
 
     /** Ustawia komunikat statusu. */
     function setStatus(msg, isError) {
@@ -207,7 +212,7 @@
             const li = document.createElement('li');
             li.innerHTML =
                 `<span><span class="move-word">${m.word}</span> ` +
-                `<span class="move-info">— ${m.orientation}, od lewej ${m.fromLeft}, od góry ${m.fromTop}` +
+                `<span class="move-info">— ${m.orientation}, pole ${coordLabel(m.fromLeft - 1, m.fromTop - 1)}` +
                 `${m.blanks ? `, blanki: ${m.blanks}` : ''}</span></span>` +
                 `<span class="move-points">${m.points} pkt</span>`;
             movesEl.appendChild(li);
@@ -216,5 +221,157 @@
 
         resultCard.style.display = 'block';
     }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // ZAKŁADKI: RĘCZNIE / ZE ZDJĘCIA
+    // ─────────────────────────────────────────────────────────────────────────
+    const tabButtons = document.querySelectorAll('.tab-btn');
+    const panes = {
+        manual: document.getElementById('pane-manual'),
+        photo: document.getElementById('pane-photo'),
+    };
+    tabButtons.forEach(btn => {
+        btn.addEventListener('click', () => {
+            tabButtons.forEach(b => b.classList.remove('active'));
+            btn.classList.add('active');
+            Object.values(panes).forEach(p => p.classList.remove('active'));
+            panes[btn.dataset.tab].classList.add('active');
+            setStatus('');
+        });
+    });
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // RĘCZNA PLANSZA 15×15
+    // ─────────────────────────────────────────────────────────────────────────
+    const manualBoardEl = document.getElementById('manual-board');
+    const manualRackEl = document.getElementById('manual-rack');
+    const btnSolveManual = document.getElementById('btn-solve-manual');
+    const btnClearManual = document.getElementById('btn-clear-manual');
+    const SIZE = 15;
+
+    /** Buduje siatkę inputów z nagłówkami kolumn (A–O) i wierszy (1–15). */
+    function buildManualBoard() {
+        manualBoardEl.innerHTML = '';
+
+        // pierwszy wiersz: pusty róg + litery kolumn
+        const corner = document.createElement('div');
+        corner.className = 'mb-corner';
+        manualBoardEl.appendChild(corner);
+        for (let x = 0; x < SIZE; x++) {
+            const h = document.createElement('div');
+            h.className = 'mb-col-head';
+            h.textContent = String.fromCharCode(65 + x);
+            manualBoardEl.appendChild(h);
+        }
+
+        // wiersze planszy: numer + 15 inputów
+        for (let y = 0; y < SIZE; y++) {
+            const rowHead = document.createElement('div');
+            rowHead.className = 'mb-row-head';
+            rowHead.textContent = String(y + 1);
+            manualBoardEl.appendChild(rowHead);
+
+            for (let x = 0; x < SIZE; x++) {
+                const input = document.createElement('input');
+                input.className = 'mb-cell';
+                input.maxLength = 1;
+                input.dataset.x = x;
+                input.dataset.y = y;
+                if (x === 7 && y === 7) input.classList.add('mb-center');
+                input.addEventListener('input', onManualCellInput);
+                input.addEventListener('keydown', onManualCellKey);
+                manualBoardEl.appendChild(input);
+            }
+        }
+    }
+
+    /** Zwraca input pola (x,y) lub null. */
+    function manualCell(x, y) {
+        if (x < 0 || x >= SIZE || y < 0 || y >= SIZE) return null;
+        return manualBoardEl.querySelector(`input[data-x="${x}"][data-y="${y}"]`);
+    }
+
+    /** Po wpisaniu litery przeskocz do pola po prawej. */
+    function onManualCellInput(e) {
+        const inp = e.target;
+        inp.value = inp.value.toUpperCase().slice(0, 1);
+        if (inp.value) {
+            const x = Number(inp.dataset.x), y = Number(inp.dataset.y);
+            const next = manualCell(x + 1, y);
+            if (next) next.focus();
+        }
+    }
+
+    /** Nawigacja strzałkami i backspace po siatce. */
+    function onManualCellKey(e) {
+        const inp = e.target;
+        const x = Number(inp.dataset.x), y = Number(inp.dataset.y);
+        let target = null;
+        if (e.key === 'ArrowRight') target = manualCell(x + 1, y);
+        else if (e.key === 'ArrowLeft') target = manualCell(x - 1, y);
+        else if (e.key === 'ArrowDown') target = manualCell(x, y + 1);
+        else if (e.key === 'ArrowUp') target = manualCell(x, y - 1);
+        else if (e.key === 'Backspace' && !inp.value) target = manualCell(x - 1, y);
+        if (target) { e.preventDefault(); target.focus(); }
+    }
+
+    /** Zbiera stan ręcznej planszy jako 15 łańcuchów po 15 znaków ('.' = puste). */
+    function collectManualBoard() {
+        const rows = [];
+        for (let y = 0; y < SIZE; y++) {
+            let row = '';
+            for (let x = 0; x < SIZE; x++) {
+                const inp = manualCell(x, y);
+                const ch = (inp && inp.value.trim().toUpperCase()) || '';
+                row += ch || '.';
+            }
+            rows.push(row);
+        }
+        return rows;
+    }
+
+    /** Wysyła ręczny stan do serwera. */
+    async function solveManual() {
+        const board = collectManualBoard();
+        const rack = (manualRackEl.value || '').trim().toUpperCase();
+
+        if (!rack) {
+            setStatus('Wpisz swoje litery (stojak), aby policzyć ruchy.', true);
+            manualRackEl.focus();
+            return;
+        }
+
+        btnSolveManual.disabled = true;
+        setStatus('Liczenie najlepszych ruchów...');
+        try {
+            const resp = await fetch('/api/solve', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ manual: true, board, rack }),
+            });
+            const data = await resp.json();
+            if (!resp.ok || !data.success) {
+                throw new Error(data.error || `Błąd serwera (${resp.status}).`);
+            }
+            renderResult(data);
+            if (data.rackEmpty) {
+                setStatus('Nie rozpoznano liter stojaka — sprawdź wpisane litery.', true);
+            } else {
+                setStatus(`Znaleziono ${data.moves.length} ruchów.`);
+            }
+        } catch (e) {
+            setStatus(e.message, true);
+        } finally {
+            btnSolveManual.disabled = false;
+        }
+    }
+
+    if (btnSolveManual) btnSolveManual.addEventListener('click', solveManual);
+    if (btnClearManual) btnClearManual.addEventListener('click', () => {
+        manualBoardEl.querySelectorAll('input.mb-cell').forEach(i => (i.value = ''));
+        setStatus('');
+    });
+
+    buildManualBoard();
 })();
 

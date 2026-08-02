@@ -24,7 +24,7 @@ const express = require('express');
 const multer = require('multer');
 const { WebSocketServer } = require('ws');
 const GameManager = require('./game/GameManager');
-const { solveFromImage } = require('./ai/imageSolver');
+const { solveFromImage, buildBoard, solveTopMoves, normalizeAiData } = require('./ai/imageSolver');
 
 // ─────────────────────────────────────────────────────────────────────────────
 // KONFIGURACJA
@@ -112,6 +112,47 @@ app.use('/api/solve', express.json({ limit: '20mb' }));
  */
 app.post('/api/solve', upload.single('image'), async (req, res) => {
     try {
+        // ── Tryb RĘCZNY: klient przesyła stan planszy i litery jako tekst ──
+        if (req.body && req.body.manual) {
+            const limit = Math.min(parseInt(req.body.limit, 10) || 20, 50);
+            const rawBoard = Array.isArray(req.body.board) ? req.body.board : [];
+            const rawRack = Array.isArray(req.body.rack)
+                ? req.body.rack.join('')
+                : String(req.body.rack || '');
+
+            console.log(`[API /api/solve] Tryb ręczny. Litery stojaka: "${rawRack}", limit=${limit}.`);
+
+            const norm = normalizeAiData(
+                { board: rawBoard, rack: rawRack.split('') },
+                CLIENT_CONFIG.alphabet,
+            );
+
+            const board = buildBoard(norm.board);
+
+            if (!norm.rack.length) {
+                return res.json({
+                    success: true,
+                    board: norm.board,
+                    rack: norm.rack,
+                    rackEmpty: true,
+                    warning: 'Nie podano liter na stojaku — wpisz swoje litery, aby policzyć ruchy.',
+                    moves: [],
+                });
+            }
+
+            await gm.dict.ready;
+            const moves = solveTopMoves(board, norm.rack, gm.dict, limit);
+            console.log(`[API /api/solve] Tryb ręczny — ruchów: ${moves.length}.`);
+
+            return res.json({
+                success: true,
+                board: norm.board,
+                rack: norm.rack,
+                rackEmpty: false,
+                moves,
+            });
+        }
+
         let buffer = null;
 
         if (req.file && req.file.buffer) {
@@ -168,6 +209,26 @@ const compLoops = new Map();
  * @type {Map<string, string>} userId(widza) -> gameId
  */
 const spectatorGames = new Map();
+
+/**
+ * Gry hostowane i oczekujące na przeciwnika (lobby gry sieciowej).
+ * @type {Map<string, {name: string, userId: string}>} gameId -> dane hosta
+ */
+const hostedGames = new Map();
+
+/**
+ * Rozgłasza aktualną listę oczekujących gier (lobby) do wszystkich klientów.
+ */
+function broadcastLobby() {
+    const games = [...hostedGames.entries()].map(([gameId, info]) => ({
+        gameId,
+        name: info.name,
+    }));
+    const payload = JSON.stringify({ type: 'lobby', games });
+    for (const client of wss.clients) {
+        if (client.readyState === client.OPEN) client.send(payload);
+    }
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // POMOCNICZE
@@ -305,15 +366,50 @@ const handlers = {
     },
 
     /**
-     * Dołącza do istniejącej gry (human vs human).
-     * Klient: { type: "joinGame", gameId: "..." }
+     * Hostuje grę sieciową i publikuje ją w lobby (lista graczy online).
+     * Klient: { type: "hostGame", name: "Ania" }
      */
-    joinGame(ws, payload) {
-        const result = gm.joinGame(payload.gameId);
+    async hostGame(ws, payload) {
+        const name = (payload.name || '').trim().slice(0, 24) || 'Gracz';
+        const result = await gm.createGameWithHuman(name);
 
         if (result.success) {
             connections.set(result.userId, ws);
             socketToUser.set(ws, result.userId);
+            hostedGames.set(result.gameId, { name, userId: result.userId });
+            broadcastLobby();
+        }
+
+        return { type: 'hostGame:response', ...result };
+    },
+
+    /**
+     * Zwraca aktualną listę gier oczekujących (lobby) tylko do pytającego.
+     * Klient: { type: "listLobby" }
+     */
+    listLobby() {
+        const games = [...hostedGames.entries()].map(([gameId, info]) => ({
+            gameId,
+            name: info.name,
+        }));
+        return { type: 'lobby', games };
+    },
+
+    /**
+     * Dołącza do istniejącej gry (human vs human).
+     * Klient: { type: "joinGame", gameId: "...", name: "Ola" }
+     */
+    joinGame(ws, payload) {
+        const name = (payload.name || '').trim().slice(0, 24) || 'Gracz';
+        const result = gm.joinGame(payload.gameId, name);
+
+        if (result.success) {
+            connections.set(result.userId, ws);
+            socketToUser.set(ws, result.userId);
+
+            // Gra przestaje być oczekująca — usuń z lobby i rozgłoś.
+            hostedGames.delete(payload.gameId);
+            broadcastLobby();
 
             // Powiadom twórcę gry że przeciwnik dołączył
             const r = gm._resolve(result.userId);
@@ -571,6 +667,16 @@ wss.on('connection', (ws) => {
                 stopCompVsCompLoop(spectatedGameId);
                 spectatorGames.delete(userId);
             }
+
+            // Jeśli host opuścił oczekującą grę — usuń ją z lobby i rozgłoś.
+            let lobbyChanged = false;
+            for (const [gameId, info] of hostedGames.entries()) {
+                if (info.userId === userId) {
+                    hostedGames.delete(gameId);
+                    lobbyChanged = true;
+                }
+            }
+            if (lobbyChanged) broadcastLobby();
 
             // Powiadom przeciwnika o rozłączeniu
             sendToOpponent(userId, { type: 'opponentDisconnected' });

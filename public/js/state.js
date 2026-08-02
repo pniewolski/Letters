@@ -13,6 +13,8 @@ export const state = {
     userId: null,
     /** Slot lokalnego gracza (0 lub 1); nieistotny w trybie widza. */
     mySlot: null,
+    /** Imię lokalnego gracza (gra sieciowa). */
+    playerName: null,
 
     /** Ostatni stan gry otrzymany z serwera. */
     gameState: null,

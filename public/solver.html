@@ -43,6 +43,33 @@
         .top-link { display: inline-block; margin-bottom: 12px; color: #8fd0a8; }
         .spinner { display: none; }
         .spinner.on { display: inline; }
+
+        /* Zakładki */
+        .tabs { display: flex; gap: 8px; margin-bottom: 16px; }
+        .tab-btn { flex: 1; padding: 10px 12px; border-radius: 8px; border: 1px solid #2f4a3a; background: #16211b; color: #cfe4d7; cursor: pointer; font-size: .98rem; }
+        .tab-btn.active { background: #26402f; border-color: #6fbf8f; color: #eaf6ee; font-weight: 700; }
+        .tab-pane { display: none; }
+        .tab-pane.active { display: block; }
+
+        /* Ręczna plansza 15x15 z inputami */
+        .manual-hint { color: #9fb7a8; font-size: .9rem; margin: 4px 0 12px; }
+        .manual-board { display: grid; grid-template-columns: auto repeat(15, 1fr); gap: 2px; max-width: 520px; }
+        .mb-corner, .mb-col-head, .mb-row-head { display: flex; align-items: center; justify-content: center; font-weight: 700; color: #9fb7a8; font-size: 12px; }
+        .mb-col-head { height: 18px; }
+        .mb-row-head { width: 18px; }
+        .manual-board input.mb-cell {
+            width: 100%; aspect-ratio: 1 / 1; min-width: 0; text-align: center;
+            border: 1px solid #2f4a3a; border-radius: 4px; background: #16211b; color: #eaf6ee;
+            font-weight: 700; text-transform: uppercase; font-size: 14px; padding: 0;
+        }
+        .manual-board input.mb-cell:focus { outline: none; border-color: #6fbf8f; background: #1d2c23; }
+        .manual-board input.mb-cell.mb-center { box-shadow: inset 0 0 0 1px #6fbf8f; }
+        .manual-rack-row { margin-top: 16px; }
+        .manual-rack-row label { display: block; margin-bottom: 6px; color: #cfe4d7; font-weight: 600; }
+        #manual-rack {
+            width: 100%; padding: 10px 12px; border-radius: 8px; border: 1px solid #2f4a3a;
+            background: #16211b; color: #eaf6ee; font-size: 1.1rem; letter-spacing: 3px; text-transform: uppercase;
+        }
     </style>
 </head>
 <body>
@@ -50,20 +77,46 @@
     <a class="top-link" href="index.html">← Powrót do gry</a>
 
     <div class="solver-card">
-        <h1>Rozwiąż grę ze zdjęcia</h1>
-        <p class="status">Zrób zdjęcie planszy razem z Twoimi literkami. Aplikacja rozpozna stan gry i podpowie do 20 najlepszych ruchów.</p>
+        <h1>Rozwiąż grę</h1>
+        <p class="status">Wpisz stan swojej fizycznej planszy ręcznie (najpewniejsze) lub wyślij zdjęcie, a AI spróbuje je rozpoznać (rozwiązanie zapasowe).</p>
 
-        <div id="drop" class="drop-zone">
-            <strong>Kliknij lub upuść zdjęcie tutaj</strong>
-            <small>JPG / PNG — zdjęcie zostanie przeskalowane do 800 px</small>
-            <input type="file" id="file" accept="image/*" hidden>
-            <img id="preview" alt="Podgląd">
+        <div class="tabs">
+            <button id="tab-manual" class="tab-btn active" data-tab="manual">⌨️ Wpisz ręcznie</button>
+            <button id="tab-photo" class="tab-btn" data-tab="photo">📷 Ze zdjęcia (AI, zapasowo)</button>
         </div>
 
-        <div class="solver-actions">
-            <button id="btn-solve" class="btn-action btn-green" disabled>🧩 Rozwiąż</button>
-            <button id="btn-reset" class="btn-action">↩ Wyczyść</button>
+        <!-- ── PANEL: RĘCZNIE ── -->
+        <div id="pane-manual" class="tab-pane active">
+            <p class="manual-hint">Wpisz litery leżące na planszy (jedno pole = jedna litera, puste pola zostaw puste).
+                Kolumny A–O, wiersze 1–15. Środek planszy oznaczony ramką.</p>
+            <div id="manual-board" class="manual-board"></div>
+
+            <div class="manual-rack-row">
+                <label for="manual-rack">Twoje litery (stojak) — wpisz ciągiem, np. AEIOŁRZ. Blank oznacz znakiem ?</label>
+                <input type="text" id="manual-rack" maxlength="14" placeholder="AEIOŁRZ">
+            </div>
+
+            <div class="solver-actions">
+                <button id="btn-solve-manual" class="btn-action btn-green">🧩 Policz najlepsze ruchy</button>
+                <button id="btn-clear-manual" class="btn-action">↩ Wyczyść planszę</button>
+            </div>
         </div>
+
+        <!-- ── PANEL: ZE ZDJĘCIA ── -->
+        <div id="pane-photo" class="tab-pane">
+            <div id="drop" class="drop-zone">
+                <strong>Kliknij lub upuść zdjęcie tutaj</strong>
+                <small>JPG / PNG — zdjęcie zostanie przeskalowane do 800 px</small>
+                <input type="file" id="file" accept="image/*" hidden>
+                <img id="preview" alt="Podgląd">
+            </div>
+
+            <div class="solver-actions">
+                <button id="btn-solve" class="btn-action btn-green" disabled>🧩 Rozwiąż ze zdjęcia</button>
+                <button id="btn-reset" class="btn-action">↩ Wyczyść</button>
+            </div>
+        </div>
+
         <p id="status" class="status"></p>
     </div>
 

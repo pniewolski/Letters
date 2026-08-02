@@ -17,9 +17,14 @@ export const dom = {
     menuStatus: $('#menu-status'),
     joinSection: $('#join-section'),
     inputGameId: $('#input-game-id'),
+    inputPlayerName: $('#input-player-name'),
+    btnHost: $('#btn-host'),
+    onlineList: $('#online-list'),
 
     // Plansza / stojaki
     board: $('#board'),
+    colLabels: $('#col-labels'),
+    rowLabels: $('#row-labels'),
     rack: $('#rack'),
     rack2: $('#rack2'),
     rackLabel1: $('#rack-label-1'),

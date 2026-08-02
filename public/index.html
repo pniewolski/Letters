@@ -13,12 +13,18 @@
     <div class="menu-box">
         <h1 id="app-title">Scrabble</h1>
         <button id="btn-vs-computer">Graj z komputerem</button>
-        <button id="btn-vs-human">Graj z człowiekiem</button>
+        <button id="btn-vs-human">Graj z człowiekiem (sieć)</button>
         <button id="btn-vs-compcomp">Komputer vs Komputer (podgląd)</button>
-        <a href="solver.html" class="solver-menu-link">🧩 Rozwiąż grę ze zdjęcia</a>
+        <a href="solver.html" class="solver-menu-link">🧩 Rozwiąż grę ze zdjęcia / ręcznie</a>
         <div id="join-section" class="hidden">
-            <input type="text" id="input-game-id" placeholder="Wklej kod gry (puste = nowy pokój)">
-            <button id="btn-join">Dołącz / Stwórz pokój</button>
+            <input type="text" id="input-player-name" placeholder="Twoje imię" maxlength="24">
+            <button id="btn-host">🎮 Hostuj grę</button>
+            <div class="online-block">
+                <div class="online-title">Gracze oczekujący online:</div>
+                <ul id="online-list" class="online-list">
+                    <li class="online-empty">Nikt jeszcze nie hostuje gry.</li>
+                </ul>
+            </div>
         </div>
         <p id="menu-status" class="status"></p>
     </div>
@@ -58,7 +64,12 @@
 
         <!-- CENTRUM: plansza -->
         <main class="board-area">
-            <div id="board" class="board"></div>
+            <div class="board-wrap">
+                <div class="board-corner"></div>
+                <div id="col-labels" class="col-labels"></div>
+                <div id="row-labels" class="row-labels"></div>
+                <div id="board" class="board"></div>
+            </div>
 
             <!-- Stojak gracza (oraz druga podstawka w trybie widza) -->
             <div class="rack-area">

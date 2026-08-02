@@ -81,6 +81,8 @@ class GameManager {
      */
     _buildPublicState(state, slot) {
         const opponentSlot = slot === 0 ? 1 : 0;
+        const me = state.players.find(p => p.slot === slot);
+        const opp = state.players.find(p => p.slot === opponentSlot);
         return {
             board: state.game.table.board.getBoardState(),
             myStack: state.game.table.stack[slot],
@@ -91,6 +93,8 @@ class GameManager {
             myTurn: this._currentSlot(state) === slot,
             finished: state.finished,
             opponentConnected: state.type === 'computer' || state.players.length === 2,
+            myName: (me && me.name) || null,
+            opponentName: (opp && opp.name) || null,
             chat: state.chat,
         };
     }
@@ -209,7 +213,7 @@ class GameManager {
      * const { gameId, userId } = await gm.createGameWithHuman();
      * // Przekaż gameId drugiemu graczowi aby mógł dołączyć
      */
-    async createGameWithHuman() {
+    async createGameWithHuman(name = null) {
         await this.dict.ready;
 
         const gameId = this._generateId();
@@ -218,7 +222,7 @@ class GameManager {
 
         const state = {
             game, type: 'human', difficulty: null,
-            players: [{ userId, slot: 0 }],
+            players: [{ userId, slot: 0, name: name || null }],
             started: false, finished: false,
             chat: [], passCount: [0, 0],
         };
@@ -295,7 +299,8 @@ class GameManager {
         if (state.finished) return { success: false, error: "Gra jest zakończona." };
 
         const userId = this._generateId();
-        state.players.push({ userId, slot: 1 });
+        const name = arguments.length > 1 ? arguments[1] : null;
+        state.players.push({ userId, slot: 1, name: name || null });
         state.started = true;
         this.userIndex.set(userId, { gameId, slot: 1 });
 

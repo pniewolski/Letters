@@ -43,6 +43,18 @@ export function pointsOf(letter) {
 }
 
 /**
+ * Zamienia współrzędne (x = kolumna, y = wiersz, oba 0-based) na etykietę
+ * w stylu szachowym: kolumna jako litera A–O, wiersz jako liczba 1–15.
+ * @param {number} x - kolumna 0..14
+ * @param {number} y - wiersz 0..14
+ * @returns {string} np. "A5"
+ */
+export function coordLabel(x, y) {
+    const col = String.fromCharCode(65 + x); // A..O
+    return `${col}${y + 1}`;
+}
+
+/**
  * Aplikuje konfigurację do DOM: ustawia tytuł oraz kolory planszy
  * (jako zmienne CSS na :root, odczytywane przez style.css).
  */
