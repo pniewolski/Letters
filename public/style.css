@@ -279,6 +279,12 @@ body {
     outline: 2px dashed var(--color-gold);
     outline-offset: -2px;
 }
+.cell.cell-selected {
+    outline: 3px solid var(--color-green);
+    outline-offset: -3px;
+    box-shadow: 0 0 8px var(--color-green);
+    z-index: 2;
+}
 .cell.live-preview-dot {
     box-shadow: inset 0 0 0 2px var(--color-accent);
 }
@@ -316,6 +322,12 @@ body {
 }
 .tile:active { cursor: grabbing; transform: scale(1.1); }
 .tile.selected { outline: 3px solid var(--color-accent); }
+.tile.tile-selected {
+    outline: 3px solid var(--color-green);
+    outline-offset: 2px;
+    box-shadow: 0 0 10px var(--color-green);
+    transform: translateY(-6px);
+}
 .tile.blank-tile { color: #666; font-style: italic; }
 .tile.disabled { cursor: default; opacity: .85; }
 .rack.rack-drop { outline: 2px dashed var(--color-gold); outline-offset: 4px; border-radius: var(--radius); }
@@ -434,5 +446,35 @@ body.mode-spectator .chat-input-row { display: none; }
     }
     .panel-left, .panel-right { flex-direction: row; flex-wrap: wrap; }
     :root { --board-size: 90vw; }
+}
+
+/* Telefony — układ pionowy: plansza na górze, stojak + akcje pod nią,
+   czat i panele na końcu. Większe klocki jako wygodniejsze cele dotykowe. */
+@media (max-width: 600px) {
+    body { overflow-y: auto; }
+    .screen { height: auto; min-height: 100vh; }
+    #screen-game.active { align-items: flex-start; }
+    .game-layout {
+        display: flex;
+        flex-direction: column;
+        height: auto;
+        gap: 10px;
+        padding: 8px;
+    }
+    /* Plansza najważniejsza — na samej górze. */
+    .board-area { order: 1; }
+    .panel-right { order: 2; flex-direction: column; }
+    .panel-left { order: 3; flex-direction: column; }
+
+    :root { --board-size: 96vw; }
+
+    .tile { width: 40px; height: 40px; font-size: 1.2rem; }
+    .rack { gap: 6px; flex-wrap: wrap; }
+    .actions { gap: 6px; }
+    .btn-action { padding: 12px 14px; font-size: 1rem; }
+
+    .chat-box { min-height: 140px; }
+    /* Etykiety współrzędnych zabierają miejsce — zmniejszamy je. */
+    .coord-label { font-size: calc(var(--cell-size) * 0.32); }
 }
 

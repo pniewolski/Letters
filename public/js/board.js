@@ -87,7 +87,7 @@ export function renderBoard() {
     for (let y = 0; y < 15; y++) {
         for (let x = 0; x < 15; x++) {
             const cell = cells[y * 15 + x];
-            cell.classList.remove('has-letter', 'has-current', 'is-blank', 'live-preview-dot', 'drop-target');
+            cell.classList.remove('has-letter', 'has-current', 'is-blank', 'live-preview-dot', 'drop-target', 'cell-selected');
             cell.textContent = '';
             cell.onclick = null;
             cell.ondragstart = null;
@@ -101,6 +101,10 @@ export function renderBoard() {
                 cell.classList.add('has-letter');
                 if (tile.isBlank) cell.classList.add('is-blank');
                 setCellLetter(cell, tile.letter, tile.isBlank);
+            } else {
+                // Puste pole — tap w trybie dotykowym kładzie wybrany klocek.
+                cell.onclick = () => onCellTap(x, y);
+                if (state.selectedTile) cell.style.cursor = 'pointer';
             }
         }
     }
@@ -112,11 +116,15 @@ export function renderBoard() {
         if (p.isBlank) cell.classList.add('is-blank');
         setCellLetter(cell, p.letter, p.isBlank);
 
+        const sel = state.selectedTile;
+        const isSelected = sel && sel.source === 'board' && sel.x === p.x && sel.y === p.y;
+        if (isSelected) cell.classList.add('cell-selected');
+
         cell.draggable = true;
         cell.style.cursor = 'grab';
-        cell.title = 'Kliknij, aby cofnąć na stojak (lub przeciągnij)';
+        cell.title = 'Tap: złap klocek (ponowny tap cofa na stojak) — lub przeciągnij';
 
-        cell.onclick = () => recallTile(p.x, p.y);
+        cell.onclick = () => onPlacedTileTap(p);
         cell.ondragstart = (e) => {
             state.drag = { source: 'board', x: p.x, y: p.y, letter: p.letter, isBlank: p.isBlank, rackIndex: p.rackIndex };
             e.dataTransfer.effectAllowed = 'move';
@@ -135,6 +143,46 @@ export function isCellEmpty(x, y) {
     if (state.gameState.board[x][y].letter) return false;
     if (state.placedTiles.some(p => p.x === x && p.y === y)) return false;
     return true;
+}
+
+/**
+ * Tap na wolnym polu (tryb dotykowy): kładzie wybrany klocek ze stojaka lub
+ * przenosi już położony klocek. Bez wybranego klocka — nic nie robi.
+ */
+function onCellTap(x, y) {
+    const sel = state.selectedTile;
+    if (!sel || !isCellEmpty(x, y)) return;
+
+    if (sel.source === 'board') {
+        state.selectedTile = null;
+        movePlacedTile(sel.x, sel.y, x, y);
+        return;
+    }
+
+    // Z stojaka — tylko w swojej turze.
+    if (!canInteract()) return;
+    if (sel.letter === '*') {
+        state.selectedTile = null;
+        showBlankModal((chosenLetter) => placeTile(sel.rackIndex, chosenLetter, x, y, true));
+    } else {
+        state.selectedTile = null;
+        placeTile(sel.rackIndex, sel.letter, x, y, false);
+    }
+}
+
+/**
+ * Tap na klocku położonym w tej turze (tryb dotykowy): pierwszy tap zaznacza go
+ * (do przeniesienia), ponowny tap w ten sam klocek cofa go na stojak.
+ */
+function onPlacedTileTap(p) {
+    const sel = state.selectedTile;
+    if (sel && sel.source === 'board' && sel.x === p.x && sel.y === p.y) {
+        state.selectedTile = null;
+        recallTile(p.x, p.y);
+    } else {
+        state.selectedTile = { source: 'board', x: p.x, y: p.y, letter: p.letter, isBlank: p.isBlank, rackIndex: p.rackIndex };
+        renderGame();
+    }
 }
 
 function onCellDragOver(e) {

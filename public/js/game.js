@@ -120,6 +120,7 @@ function onExchangeClick() {
         state.selectedForExchange.clear();
     } else {
         state.placedTiles = [];
+        state.selectedTile = null;
         state.exchangeMode = true;
         renderGame();
         sendLivePreview();
@@ -141,6 +142,7 @@ export function initGameActions() {
 
     dom.btnRecall.onclick = () => {
         state.placedTiles = [];
+        state.selectedTile = null;
         renderGame();
         sendLivePreview();
     };

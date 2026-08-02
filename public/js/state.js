@@ -29,6 +29,12 @@ export const state = {
 
     /** Dane aktualnie przeciąganego klocka. */
     drag: null, // { source:'rack'|'board', rackIndex?, letter, x?, y?, isBlank? }
+
+    /**
+     * Klocek wybrany dotknięciem/kliknięciem (tryb mobilny „tapnij, by złapać —
+     * tapnij, by upuścić"). null gdy nic nie jest wybrane.
+     */
+    selectedTile: null, // { source:'rack'|'board', rackIndex?, letter, x?, y?, isBlank? }
 };
 
 /**

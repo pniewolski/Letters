@@ -82,6 +82,7 @@ function handleMessage(msg) {
             if (!msg.success) addChatSystem(`Błąd: ${msg.error}`);
             else if (msg.lostTurn) addChatSystem(`Stracono turę! Złe słowa: ${msg.wrongWords?.join(', ')}`);
             state.placedTiles = [];
+            state.selectedTile = null;
             if (msg.state) { state.gameState = msg.state; renderGame(); }
             break;
 
@@ -89,6 +90,7 @@ function handleMessage(msg) {
             if (!msg.success) addChatSystem(`Błąd: ${msg.error}`);
             state.exchangeMode = false;
             state.selectedForExchange.clear();
+            state.selectedTile = null;
             if (msg.state) { state.gameState = msg.state; renderGame(); }
             break;
 
@@ -218,7 +220,7 @@ function renderLobby(games) {
     if (!list) return;
     list.innerHTML = '';
 
-    const others = (games || []).filter(g => g.gameId !== state.gameId);
+    const others = (games || []).filter(g => g.gameId !== state.gameId && g.userId !== state.userId);
     if (others.length === 0) {
         const li = document.createElement('li');
         li.className = 'online-empty';

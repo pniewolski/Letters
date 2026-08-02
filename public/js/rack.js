@@ -77,6 +77,13 @@ export function renderRack() {
             tile.draggable = true;
             tile.addEventListener('dragstart', (e) => onRackTileDragStart(e, i, letter));
             tile.addEventListener('dragend', onRackTileDragEnd);
+
+            // Tryb dotykowy: tap zaznacza klocek, kolejny tap na tym samym — odznacza.
+            const sel = state.selectedTile;
+            if (sel && sel.source === 'rack' && sel.rackIndex === i) {
+                tile.classList.add('tile-selected');
+            }
+            tile.addEventListener('click', () => onRackTileTap(i, letter));
         } else {
             tile.draggable = false;
             tile.classList.add('disabled');
@@ -107,7 +114,19 @@ function onRackTileDragStart(e, index, letter) {
     e.dataTransfer.effectAllowed = 'move';
 }
 
-function onRackTileDragEnd(e) {
+/**
+ * Tap na klocku stojaka (tryb dotykowy): zaznacza go do położenia. Kolejny tap
+ * na tym samym klocku odznacza. Następnie tap na wolnym polu planszy go kładzie.
+ */
+function onRackTileTap(index, letter) {
+    const sel = state.selectedTile;
+    if (sel && sel.source === 'rack' && sel.rackIndex === index) {
+        state.selectedTile = null; // odznacz
+    } else {
+        state.selectedTile = { source: 'rack', rackIndex: index, letter };
+    }
+    renderGame();
+}function onRackTileDragEnd(e) {
     e.target.style.opacity = '1';
     state.drag = null;
     document.querySelectorAll('.cell.drop-target').forEach(c => c.classList.remove('drop-target'));
@@ -131,6 +150,19 @@ export function initRackDropZone() {
         if (d && d.source === 'board') {
             e.preventDefault();
             state.placedTiles = state.placedTiles.filter(t => !(t.x === d.x && t.y === d.y));
+            renderGame();
+            sendLivePreview();
+        }
+    });
+
+    // Tryb dotykowy: gdy wybrany jest klocek z planszy, tap na stojaku cofa go.
+    dom.rack.addEventListener('click', (e) => {
+        const sel = state.selectedTile;
+        // Ignoruj, jeśli tapnięto konkretny klocek stojaka (obsługiwany osobno).
+        if (e.target.closest('.tile')) return;
+        if (sel && sel.source === 'board') {
+            state.placedTiles = state.placedTiles.filter(t => !(t.x === sel.x && t.y === sel.y));
+            state.selectedTile = null;
             renderGame();
             sendLivePreview();
         }

@@ -218,15 +218,23 @@ const hostedGames = new Map();
 
 /**
  * Rozgłasza aktualną listę oczekujących gier (lobby) do wszystkich klientów.
+ * Każdy klient dostaje listę BEZ swojej własnej hostowanej gry, dzięki czemu
+ * host nie widzi (i nie może dołączyć do) własnej gry — niezależnie od kolejności
+ * wiadomości względem `hostGame:response`.
  */
 function broadcastLobby() {
     const games = [...hostedGames.entries()].map(([gameId, info]) => ({
         gameId,
         name: info.name,
+        userId: info.userId,
     }));
-    const payload = JSON.stringify({ type: 'lobby', games });
     for (const client of wss.clients) {
-        if (client.readyState === client.OPEN) client.send(payload);
+        if (client.readyState !== client.OPEN) continue;
+        const clientUserId = socketToUser.get(client);
+        const visible = games
+            .filter(g => g.userId !== clientUserId)
+            .map(({ gameId, name }) => ({ gameId, name }));
+        client.send(JSON.stringify({ type: 'lobby', games: visible }));
     }
 }
 
@@ -387,11 +395,14 @@ const handlers = {
      * Zwraca aktualną listę gier oczekujących (lobby) tylko do pytającego.
      * Klient: { type: "listLobby" }
      */
-    listLobby() {
-        const games = [...hostedGames.entries()].map(([gameId, info]) => ({
-            gameId,
-            name: info.name,
-        }));
+    listLobby(ws) {
+        const clientUserId = socketToUser.get(ws);
+        const games = [...hostedGames.entries()]
+            .filter(([, info]) => info.userId !== clientUserId)
+            .map(([gameId, info]) => ({
+                gameId,
+                name: info.name,
+            }));
         return { type: 'lobby', games };
     },
 
