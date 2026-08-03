@@ -10,7 +10,7 @@ import { CONFIG } from './config.js';
 import { wsSend } from './net.js';
 import { buildBoard, renderBoard } from './board.js';
 import { renderRack, initRackDropZone } from './rack.js';
-import { startClock, stopClock } from './clock.js';
+import { startClock, stopClock, setActiveSlot } from './clock.js';
 import { addChatSystem } from './chat.js';
 import { requestHint } from './hints.js';
 import { sendLivePreview } from './livePreview.js';
@@ -74,6 +74,7 @@ export function renderGame() {
         dom.bagSize.textContent = g.bagSize;
         dom.turnIndicator.textContent = g.currentSlot === 0 ? 'Komputer 1' : 'Komputer 2';
         dom.turnIndicator.style.color = g.currentSlot === 0 ? '#2ecc71' : '#e74c3c';
+        setActiveSlot(g.currentSlot);
     } else {
         dom.myPoints.textContent = g.myPoints;
         dom.oppPoints.textContent = g.opponentPoints;
@@ -81,6 +82,7 @@ export function renderGame() {
         dom.bagSize.textContent = g.bagSize;
         dom.turnIndicator.textContent = g.myTurn ? 'TWOJA' : 'Przeciwnika';
         dom.turnIndicator.style.color = g.myTurn ? '#2ecc71' : '#e74c3c';
+        setActiveSlot(g.myTurn ? 0 : 1);
     }
 
     if (g.finished) {

@@ -40,14 +40,14 @@ class Strategy {
      * @param {Array<object>} moves - Tablica dostępnych ruchów (posortowana malejąco wg punktów)
      * @param {Board} board - Aktualna plansza (obecnie nieużywana, zarezerwowana na przyszłość)
      * @param {string[]} stack - Stojak gracza
+     * @param {number} [bagSize=Infinity] - Liczba liter w worku (do decyzji o wymianie)
      * @returns {object} Wybrany ruch:
      *   - Słowo: obiekt ruchu z Solvera (np. { wordSimple, points, word, x, y, ... })
      *   - Wymiana: { replace: true, letters: string[] }
      */
-    getBestMove(moves, board, stack) {
-        if (this.replaceDecision(moves, stack)) {
+    getBestMove(moves, board, stack, bagSize = Infinity) {
+        if (this.replaceDecision(moves, stack, bagSize)) {
             let replace = this.pickTilesToExchange(stack);
-            console.log("!!!!!!!!!!!!!!!! replace", replace);
             return {
                 replace: true,
                 letters: replace
@@ -91,18 +91,27 @@ class Strategy {
 
     /**
      * Decyduje, czy warto wymienić litery zamiast grać najlepszy ruch.
-     * @param {Array<object>} moves - Dostępne ruchy
-     * @returns {boolean} true jeśli najlepszy ruch ma za mało punktów
+     * Wymiana jest opłacalna tylko wtedy, gdy:
+     *  - stojak jest pełny (7 liter),
+     *  - w worku jest jeszcze sensowny zapas liter (końcówka gry — nie wymieniamy),
+     *  - najlepszy ruch daje mniej niż próg punktowy.
+     * @param {Array<object>} moves - Dostępne ruchy (posortowane malejąco wg punktów)
+     * @param {string[]} stack - Stojak gracza
+     * @param {number} [bagSize=Infinity] - Liczba liter w worku
+     * @returns {boolean} true jeśli najlepszy ruch ma za mało punktów i wymiana jest możliwa
      */
-    replaceDecision(moves, stack) {
+    replaceDecision(moves, stack, bagSize = Infinity) {
+        // Pełny stojak — inaczej wymiana nie ma sensu.
         if (stack.length < 7) {
             return false;
         }
-        if (moves[0].points < this.pointsThreshold) {
-            return true;
-        } else {
+        // Końcówka gry: pusty worek lub za mało liter, by wymiana się opłacała
+        // (człowiek ma analogiczny wymóg bag >= 7 w Game.humanMove).
+        if (bagSize < 7) {
             return false;
         }
+        // Najlepszy ruch jest słaby — wymieniamy nieużyteczne litery.
+        return moves[0].points < this.pointsThreshold;
     }
 }
 

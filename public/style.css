@@ -143,6 +143,8 @@ body {
 .game-meta { margin-top: 10px; font-size: .9rem; color: var(--color-muted); }
 .game-meta > div { margin: 3px 0; }
 .timer { font-size: 1.1rem; color: var(--color-accent); margin-top: 6px; }
+.player-info .timer { margin-left: 8px; font-size: .95rem; }
+.player-info .timer.timer-active { color: var(--color-green); font-weight: bold; }
 
 /* Czat */
 .chat-box {

@@ -61,7 +61,12 @@ class Game {
             return this._computerExchangeOrPass(player);
         }
 
-        const move = this.strategy.getBestMove(avaliableMoves, this.table.board, stack);
+        const move = this.strategy.getBestMove(
+            avaliableMoves,
+            this.table.board,
+            stack,
+            this.table.bag.getBagSize()
+        );
 
         // Strategia zdecydowała o wymianie liter.
         if (move.replace) {

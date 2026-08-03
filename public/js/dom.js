@@ -39,7 +39,8 @@ export const dom = {
     oppRackSize: $('#opp-rack-size'),
     bagSize: $('#bag-size'),
     turnIndicator: $('#turn-indicator'),
-    clock: $('#clock'),
+    myClock: $('#my-clock'),
+    oppClock: $('#opp-clock'),
 
     // Czat
     chatMessages: $('#chat-messages'),
