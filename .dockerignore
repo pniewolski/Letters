@@ -1,0 +1,9 @@
+node_modules/
+npm-debug.log
+*.log
+.env
+.git/
+.gitignore
+server/ai.config.json
+server/ai.config.json2
+

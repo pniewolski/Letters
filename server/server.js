@@ -14,7 +14,7 @@
  *
  * @example
  * // Uruchomienie: node server/server.js
- * // Klient łączy się: ws://localhost:3000
+ * // Klient łączy się: ws://localhost:8080
  */
 
 const path = require('path');
@@ -30,7 +30,7 @@ const { solveFromImage, buildBoard, solveTopMoves, normalizeAiData } = require('
 // KONFIGURACJA
 // ─────────────────────────────────────────────────────────────────────────────
 
-const PORT = process.env.PORT || 3000;
+const PORT = process.env.PORT || 8080;
 
 // Zmiana katalogu roboczego na /server (bo klasy czytają pliki relatywnie)
 process.chdir(path.join(__dirname));
