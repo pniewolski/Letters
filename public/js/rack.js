@@ -78,7 +78,13 @@ export function renderRack() {
             tile.addEventListener('dragstart', (e) => onRackTileDragStart(e, i, letter));
             tile.addEventListener('dragend', onRackTileDragEnd);
 
-            // Tryb dotykowy: tap zaznacza klocek, kolejny tap na tym samym — odznacza.
+            // Klocek jest też celem upuszczenia — pozwala zmienić kolejność liter
+            // na stojaku (przeciągnięcie jednego klocka na inny).
+            tile.addEventListener('dragover', onRackTileDragOver);
+            tile.addEventListener('drop', (e) => onRackTileDrop(e, i));
+
+            // Tryb dotykowy: tap zaznacza klocek, kolejny tap na tym samym — odznacza,
+            // a tap na INNYM klocku stojaka zamienia ich kolejność.
             const sel = state.selectedTile;
             if (sel && sel.source === 'rack' && sel.rackIndex === i) {
                 tile.classList.add('tile-selected');
@@ -116,17 +122,83 @@ function onRackTileDragStart(e, index, letter) {
 
 /**
  * Tap na klocku stojaka (tryb dotykowy): zaznacza go do położenia. Kolejny tap
- * na tym samym klocku odznacza. Następnie tap na wolnym polu planszy go kładzie.
+ * na tym samym klocku odznacza. Tap na INNYM klocku stojaka zamienia kolejność
+ * (przydatne do eksperymentowania z układem liter na urządzeniach dotykowych).
  */
 function onRackTileTap(index, letter) {
     const sel = state.selectedTile;
     if (sel && sel.source === 'rack' && sel.rackIndex === index) {
         state.selectedTile = null; // odznacz
-    } else {
-        state.selectedTile = { source: 'rack', rackIndex: index, letter };
+        renderGame();
+        return;
     }
+    if (sel && sel.source === 'rack' && sel.rackIndex !== index) {
+        // Zmiana kolejności: przenieś zaznaczony klocek na pozycję dotkniętego.
+        reorderRack(sel.rackIndex, index);
+        state.selectedTile = null;
+        return;
+    }
+    state.selectedTile = { source: 'rack', rackIndex: index, letter };
     renderGame();
-}function onRackTileDragEnd(e) {
+}
+
+function onRackTileDragOver(e) {
+    // Zezwól na upuszczenie tylko wtedy, gdy przeciągamy klocek ze stojaka.
+    if (state.drag && state.drag.source === 'rack') {
+        e.preventDefault();
+        e.dataTransfer.dropEffect = 'move';
+    }
+}
+
+function onRackTileDrop(e, targetIndex) {
+    const d = state.drag;
+    if (d && d.source === 'rack') {
+        e.preventDefault();
+        e.stopPropagation(); // nie traktuj tego jako recall na strefie stojaka
+        reorderRack(d.rackIndex, targetIndex);
+    }
+}
+
+/**
+ * Zmienia kolejność liter na stojaku, przenosząc klocek z pozycji `from` na `to`.
+ * Aktualizuje wszystkie odwołania do indeksów stojaka (postawione klocki, wybór
+ * do wymiany, aktualnie wybrany klocek), aby pozostały spójne. Zmiana jest czysto
+ * lokalna (wizualna) — nie jest wysyłana na serwer.
+ * @param {number} from - indeks źródłowy w myStack
+ * @param {number} to - indeks docelowy w myStack
+ */
+function reorderRack(from, to) {
+    const g = state.gameState;
+    if (!g || !g.myStack) return;
+    const stack = g.myStack;
+    if (from === to || from < 0 || to < 0 || from >= stack.length || to >= stack.length) return;
+
+    // Permutacja indeksów: order[newIndex] = oldIndex
+    const order = stack.map((_, i) => i);
+    order.splice(to, 0, order.splice(from, 1)[0]);
+
+    const newStack = order.map(oldI => stack[oldI]);
+
+    // Mapowanie oldIndex -> newIndex
+    const oldToNew = new Array(stack.length);
+    order.forEach((oldI, newI) => { oldToNew[oldI] = newI; });
+
+    // Przemapuj postawione klocki, zaznaczenia do wymiany i wybrany klocek.
+    state.placedTiles.forEach(p => {
+        if (typeof p.rackIndex === 'number') p.rackIndex = oldToNew[p.rackIndex];
+    });
+    if (state.selectedForExchange && state.selectedForExchange.size) {
+        state.selectedForExchange = new Set([...state.selectedForExchange].map(i => oldToNew[i]));
+    }
+    if (state.selectedTile && state.selectedTile.source === 'rack') {
+        state.selectedTile.rackIndex = oldToNew[state.selectedTile.rackIndex];
+    }
+
+    g.myStack = newStack;
+    renderGame();
+}
+
+function onRackTileDragEnd(e) {
     e.target.style.opacity = '1';
     state.drag = null;
     document.querySelectorAll('.cell.drop-target').forEach(c => c.classList.remove('drop-target'));

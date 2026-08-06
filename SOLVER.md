@@ -118,3 +118,44 @@ curl.exe -X POST "http://localhost:3000/api/solve" -F "image=@plansza.jpg"
 W menu gry pojawił się link **„🧩 Rozwiąż grę ze zdjęcia"** (strona `/solver.html`):
 przeciągnij/wybierz zdjęcie i kliknij „Rozwiąż".
 
+## Strategia AI komputera (`server/game/Strategy.js`)
+
+Komputer nie gra już wyłącznie ruchu o najwyższej liczbie punktów (decyzja lokalnie
+optymalna). Zamiast tego ocenia ~20 najlepszych ruchów i wybiera ten o najlepszym
+wyniku łącznym:
+
+```
+wynik = punkty − waga·kara_za_otwarcie_premii + waga·jakość_pozostałych_liter
+```
+
+- **Kara za ekspozycję** (`computeExposurePenalty`): karze ruchy odsłaniające
+  przeciwnikowi puste pola premiowe sąsiadujące z nowo położonymi literami —
+  mocniej za mnożniki słowa 3×/2× (m.in. droga do premii przy brzegach planszy),
+  słabiej za premie literowe.
+- **Ocena „leave"** (`leaveScore`): premiuje zbalansowany stojak (samogłoski/
+  spółgłoski) oraz blanki, karze ciężkie litery i nadmiarowe duplikaty.
+
+**Decyzja o wymianie** (`replaceDecision` + `countDeadweight`): komputer wymienia
+litery tylko, gdy najlepszy ruch jest słaby (`< pointsThreshold`) **oraz** stojak
+faktycznie zawiera „balast" (ciężkie litery Ą/Ę/F/Ó/Ś/Ż/Ć/Ń/Ź lub nadmiarowe
+duplikaty). Gdy litery są dobre, woli zagrać słabszy ruch i utrzymać tempo. Wymiana
+jest blokowana w końcówce gry (worek < 7 liter).
+
+Wagi i progi są polami konstruktora klasy `Strategy` (`exposureWeight`,
+`leaveWeight`, `premiumWeights`, `candidatePoolSize`, `deadweightThreshold`,
+`pointsThreshold`) — łatwe do dostrojenia.
+
+## Zmiana kolejności liter na stojaku (`public/js/rack.js`)
+
+Gracz może ręcznie przestawiać własne klocki na stojaku (do eksperymentowania
+z układem):
+
+- **Desktop:** przeciągnij klocek na inny klocek stojaka (drag & drop).
+- **Mobile:** tapnij klocek, a potem tapnij inny — zamienią się kolejnością.
+
+Zmiana jest czysto lokalna (wizualna) i nie jest wysyłana na serwer. Funkcja
+`reorderRack()` przemapowuje odwołania do indeksów (`placedTiles`,
+`selectedForExchange`, `selectedTile`), więc układ pozostaje spójny nawet gdy część
+liter jest już postawiona na planszy.
+
+
