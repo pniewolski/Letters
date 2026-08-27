@@ -10,7 +10,7 @@
 export const CONFIG = {
     title: 'Scrabble',
     alphabet: '',
-    /** Mapa litera -> punkty, np. { A:1, Ź:10, '*':0 } */
+    /** Mapa litera -> punkty, np. { A:1, Ź:9, '*':0 } */
     letterPoints: {},
     /** Układ bonusów 15x15: [x][y] = { w, l } */
     boardLayout: [],
