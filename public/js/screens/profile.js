@@ -139,7 +139,11 @@ export default async function profileScreen(host, params = {}) {
                             el('span', { class: `result-badge result-${g.result}` },
                                 { win: 'W', loss: 'P', draw: 'R' }[g.result] || '?'),
                             el('div', { class: 'history-main' },
-                                el('div', {}, g.opponents.map(o => o.name).join(', ') || 'solo'),
+                                el('div', {}, g.opponents.map(o => o.name).join(', ') || 'solo',
+                                    // Partie z komputerem są w historii, ale nie w licznikach.
+                                    g.opponents.some(o => o.isComputer)
+                                        ? el('span', { class: 'tag tag-bot', title: 'Nie liczy się do statystyk' }, 'towarzyska')
+                                        : null),
                                 el('div', { class: 'muted small' },
                                     `${g.variant} · ${g.score} pkt`
                                     + (g.bestWord ? ` · ${g.bestWord} (${g.bestWordPoints})` : '')

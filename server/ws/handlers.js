@@ -239,7 +239,7 @@ async function gamePreview(ctx, payload) {
 
     for (const userId of ctx.hub.audienceOf(table)) {
         if (userId === ctx.user.id) continue;
-        ctx.hub.sendToUser(userId, { type: 'preview', slot: seat.slot, tiles });
+        ctx.hub.sendToUser(userId, { type: 'preview', tableId: table.id, slot: seat.slot, tiles });
     }
     return null;
 }

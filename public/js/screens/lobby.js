@@ -297,7 +297,7 @@ export function openCreateTable(variants, preselectVariantId = null) {
         const bots = Number(computerSeats.value || 0);
         const guest = store.user?.isGuest;
         ratedNote.textContent = bots > 0
-            ? 'Partie z komputerem nie liczą się do rankingu.'
+            ? 'Partie z komputerem nie liczą się ani do rankingu, ani do statystyk — komputer gra zawsze tak samo, więc rekordy z nim nic nie mówią.'
             : guest
                 ? 'Grasz jako gość — partia nie wpłynie na ranking, ale zapisze się w twojej sesji.'
                 : 'Partia będzie rankingowa.';

@@ -66,7 +66,10 @@ class StatsRepo {
 
     /**
      * Nanosi wynik zakończonej partii: statystyki, skalpy i ranking.
-     * Goście liczą się do skalpów przeciwnika, ale sami nie wpływają na ranking.
+     *
+     * Liczą się wyłącznie partie **między ludźmi**. Goście wchodzą do statystyk
+     * i skalpów przeciwnika, ale nie ruszają rankingu. Partie z komputerem są
+     * pomijane w całości.
      *
      * @param {object} game - Dane partii `{ id, rated }`
      * @param {Array<object>} participants - Uczestnicy z wynikami:
@@ -75,6 +78,13 @@ class StatsRepo {
      */
     async applyGameResult(game, participants) {
         const now = Date.now();
+
+        // Partie z komputerem nie idą do statystyk. Komputer gra zawsze tak samo
+        // i jest dostępny bez ograniczeń, więc rekordy i bilanse z jego udziałem
+        // nic nie mówią o graczu. Partia i tak trafia do historii — po prostu
+        // nie rusza liczników.
+        if (participants.some(p => p.isComputer)) return new Map();
+
         const humans = participants.filter(p => p.userId != null);
 
         // ── Ranking (tylko partie rankingowe między zarejestrowanymi kontami) ─

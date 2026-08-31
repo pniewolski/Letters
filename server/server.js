@@ -90,7 +90,8 @@ async function buildDeps() {
     const auth = new AuthService(users, sessions);
 
     const seeded = await variants.seedPresets();
-    if (seeded.length) console.log(`[Tryby] Dodano wbudowane tryby gry: ${seeded.join(', ')}`);
+    if (seeded.added.length) console.log(`[Tryby] Dodano wbudowane tryby gry: ${seeded.added.join(', ')}`);
+    if (seeded.updated.length) console.log(`[Tryby] Zaktualizowano wbudowane tryby gry: ${seeded.updated.join(', ')}`);
 
     // Po nieoczekiwanym restarcie nie ma jak dokończyć partii w toku.
     const orphans = await games.abandonOrphans();

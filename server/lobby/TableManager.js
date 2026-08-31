@@ -119,6 +119,10 @@ class TableManager extends EventEmitter {
             throw new Error(`Masz już ${MAX_TABLES_PER_USER} otwarte stoły — zamknij któryś przed założeniem nowego.`);
         }
 
+        // Przy jednym stole naraz — inaczej zostalibyśmy na widowni poprzedniego
+        // i dalej dostawali jego stan, wchodzący na ekran bieżącej partii.
+        this._releasePreviousTable(user);
+
         const variant = options.variantId
             ? await this.variants.getCompiled(options.variantId)
             : await this.variants.getDefaultCompiled();
@@ -222,8 +226,7 @@ class TableManager extends EventEmitter {
         }
 
         // Z innego stołu odchodzimy najpierw.
-        const previous = this.userTable.get(user.id);
-        if (previous && previous !== table.id) this.leave(user.id);
+        this._releasePreviousTable(user, table.id);
 
         const wantsSeat = !options.asSpectator && table.status === STATUS.WAITING;
         if (wantsSeat) {
@@ -244,6 +247,39 @@ class TableManager extends EventEmitter {
         this.emit('table', { table });
         this.emit('lobby');
         return table;
+    }
+
+    /**
+     * Zwalnia stół, przy którym gracz siedział wcześniej.
+     *
+     * Gracz może być tylko przy jednym stole naraz. Gdyby zostawić go na
+     * widowni poprzedniego, dalej dostawałby stamtąd stan partii — a ten
+     * wchodziłby na ekran stołu, przy którym właśnie siedzi.
+     *
+     * Trwającej partii nie porzucamy po cichu: siedzącemu przy stole graczowi
+     * każemy najpierw świadomie ją opuścić, bo wyjście liczy się jak poddanie.
+     *
+     * @param {object} user - Gracz `{ id }`
+     * @param {number} [keepTableId] - Stół, którego nie zwalniamy (powrót do siebie)
+     * @throws {Error} Gdy gracz siedzi przy trwającej partii
+     * @private
+     */
+    _releasePreviousTable(user, keepTableId = null) {
+        const previous = this.tableOf(user.id);
+        if (!previous || previous.id === keepTableId) return;
+
+        const seat = previous.seatOf(user.id);
+        const playing = previous.status === STATUS.PLAYING
+            && previous.game && !previous.game.finished;
+
+        if (seat && playing) {
+            throw new Error(
+                `Siedzisz przy trwającej partii („${previous.name}"). `
+                + 'Najpierw ją zakończ albo wstań od stołu — wyjście liczy się jako poddanie.',
+            );
+        }
+
+        this.leave(user.id);
     }
 
     /**

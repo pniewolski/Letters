@@ -51,13 +51,15 @@ Mało mnożników słowa (4 potrójne w rogach, 8 podwójnych), za to dużo mno�
 litery, łącznie z poczwórnymi. 100 liter + 4 blanki. Gra bardziej pozycyjna,
 mniej zależna od jednego szczęśliwego trafienia w róg.
 
-**SCR** — tryb klasyczny: gęstsza siatka mnożników, potrójne premie słowa przy
-krawędziach, 98 liter + 2 blanki. Szybszy i bardziej punktowy.
+**SCR** — tryb klasyczny: standardowy układ premii 15×15 (8 pól potrójnej
+wartości słowa, 16 podwójnej, 12 potrójnej litery, 24 podwójnej), 100 klocków
+o łącznej wartości 190 punktów i premia 50 punktów za wyłożenie całego stojaka.
+Ma grać dokładnie tak, jak przywykli gracze.
 
-Oba zestawy klocków wyprowadzono z **rzeczywistej częstości liter w słowniku**
-(`server/slownik.txt`), narzędziem `npm run tiles:derive` — im częstsza litera,
-tym więcej jej klocków i tym mniej punktów. Możesz powtórzyć te obliczenia
-z własnymi parametrami i zbudować swój rozkład:
+Zestaw klocków dla trybu **Literki** wyprowadzono z **rzeczywistej częstości
+liter w słowniku** (`server/slownik.txt`) narzędziem `npm run tiles:derive` —
+im częstsza litera, tym więcej jej klocków i tym mniej punktów. Możesz powtórzyć
+te obliczenia z własnymi parametrami i zbudować swój rozkład:
 
 ```powershell
 node server/tools/deriveTiles.js --total 100 --alpha 0.8 --beta 0.8 --min 2
@@ -170,7 +172,7 @@ właściwy dialekt. Migracje wykonują się przy starcie i zapisują w tabeli
 |--------|-----------|
 | `users` | konta i goście (`is_guest`), ranking Elo |
 | `sessions` | tokeny sesji (konta 30 dni, goście 1 dzień) |
-| `variants` | tryby gry — definicja w JSON-ie |
+| `variants` | tryby gry — definicja w JSON-ie (systemowe nadpisywane z kodu przy starcie) |
 | `game_tables` | stoły (ślad historyczny; stan na żywo jest w pamięci) |
 | `games`, `game_participants` | rozegrane partie i wyniki |
 | `user_stats` | statystyki zbiorcze gracza |
@@ -201,6 +203,9 @@ automatyczny pas — inaczej jedna zerwana sesja blokowałaby stół w nieskońc
 
 ## Konta i goście
 
+- **Partie z komputerem nie liczą się do statystyk ani rankingu.** Komputer
+  gra zawsze tak samo i jest dostępny bez ograniczeń, więc rekordy z nim nic
+  nie mówią o graczu. Partia trafia do historii, ale nie rusza liczników.
 - **Gość** dostaje konto techniczne i sesję zapisaną w `sessionStorage` —
   zamknięcie karty kończy jego przygodę. Nie wpływa na ranking i nie może
   tworzyć trybów gry.

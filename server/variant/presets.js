@@ -2,15 +2,13 @@
  * @file presets.js
  * @description Wbudowane tryby gry zakładane przy pierwszym starcie serwera.
  *
- * Oba zestawy — układ premii, ilości klocków i punktacja — są **autorskie**.
- * Rozkład liter wyprowadzono z częstości ich występowania w `slownik.txt`
- * (patrz `server/tools/deriveTiles.js`), a nie przepisano z żadnej istniejącej
- * gry planszowej. Układ premii ma symetrię ośmiokrotną i został wygenerowany
- * z reguł geometrycznych opisanych przy każdym trybie.
+ * Presety trafiają do bazy jako zwykłe rekordy tabeli `variants` — nie są
+ * zaszyte w silniku. Każdy gracz może je skopiować i przerobić po swojemu,
+ * a administrator zmienić albo usunąć bez ruszania kodu. To ta sama droga,
+ * którą przechodzi każdy tryb stworzony w edytorze.
  *
- * Presety trafiają do bazy jako zwykłe rekordy tabeli `variants`, więc każdy
- * gracz może je skopiować i przerobić po swojemu — a administrator może je
- * usunąć albo podmienić bez ruszania kodu.
+ * Zmieniając definicję presetu wystarczy zrestartować serwer: `seedPresets()`
+ * nadpisuje tryby systemowe, żeby baza nadążała za kodem.
  *
  * @example
  * const { PRESETS } = require('./presets');
@@ -25,8 +23,11 @@
 // za to dużo mnożników litery — łącznie z poczwórnymi. Efekt: gra jest bardziej
 // pozycyjna i mniej zależna od jednego szczęśliwego trafienia w róg.
 //
-// Klocki: 100 liter + 4 blanki. Trzy najrzadsze litery (Ć, Ń, Ź) występują
-// pojedynczo, ale są warte 12 punktów — opłaca się je zaplanować, nie wymienić.
+// Klocki: 100 liter + 4 blanki. Rozkład wyprowadzony z częstości liter
+// w `slownik.txt` narzędziem `server/tools/deriveTiles.js` — im częstsza litera,
+// tym więcej jej klocków i tym mniej punktów. Trzy najrzadsze litery (Ć, Ń, Ź)
+// występują pojedynczo, ale są warte 12 punktów: opłaca się je zaplanować,
+// nie wymienić.
 
 const LITERKI = {
     slug: 'literki',
@@ -89,8 +90,8 @@ const LITERKI = {
             { letter: 'W', count: 4, points: 2, usefulness: 1 },
             { letter: 'Y', count: 3, points: 2, usefulness: 2 },
             { letter: 'Z', count: 3, points: 2, usefulness: 1 },
-            { letter: 'Ż', count: 2, points: 8, usefulness: 4 },
             { letter: 'Ź', count: 1, points: 12, usefulness: 5 },
+            { letter: 'Ż', count: 2, points: 8, usefulness: 4 },
         ],
         rules: {
             exchangeMinBag: 5,
@@ -122,74 +123,78 @@ const LITERKI = {
 // ─────────────────────────────────────────────────────────────────────────────
 // SCR — tryb klasyczny
 // ─────────────────────────────────────────────────────────────────────────────
-// Dla graczy, którzy wolą klasyczne tempo: gęstsza siatka mnożników słowa,
-// potrójne premie słowa przy krawędziach (nie w rogach) i tańsze rzadkie litery.
-// Klocki: 98 liter + 2 blanki, punktacja z częstości występowania liter
-// w słowniku — dlatego W i Y są tu tanie, a R, S i Z warte 2 punkty.
+// Klasyczny układ 15×15: 8 pól potrójnej wartości słowa, 16 podwójnej,
+// 12 potrójnej litery i 24 podwójnej, z polem startowym pośrodku. Do tego
+// standardowy polski zestaw 100 klocków (98 liter + 2 blanki, razem 190 punktów)
+// i premia 50 punktów za wyłożenie całego stojaka.
+//
+// Ten tryb ma grać dokładnie tak, jak przywykli gracze — dlatego liczby są
+// klasyczne, a nie wyprowadzone jak w Literkach. Siedzą jednak w bazie jako
+// zwykły rekord, więc da się je zmienić z poziomu aplikacji.
 
 const SCR = {
     slug: 'scr',
     name: 'SCR',
     description:
-        'Tryb klasyczny: gęsta siatka mnożników, potrójne premie słowa przy krawędziach, '
-        + '98 liter i 2 blanki. Szybsza i bardziej punktowa gra niż Literki.',
+        'Tryb klasyczny: standardowy układ premii 15×15, 100 klocków (190 punktów) '
+        + 'i premia 50 punktów za wyłożenie całego stojaka. Gra tak, jak przywykli gracze.',
     definition: {
         board: {
             size: 15,
             grid: [
-                '..3.d.....d.3..',
+                '3..d...3...d..3',
                 '.2...t...t...2.',
-                '3.2...d.d...2.3',
-                '...2...d...2...',
-                'd...2.....2...d',
+                '..2...d.d...2..',
+                'd..2...d...2..d',
+                '....2.....2....',
                 '.t...t...t...t.',
                 '..d...d.d...d..',
-                '...d...@...d...',
+                '3..d...@...d..3',
                 '..d...d.d...d..',
                 '.t...t...t...t.',
-                'd...2.....2...d',
-                '...2...d...2...',
-                '3.2...d.d...2.3',
+                '....2.....2....',
+                'd..2...d...2..d',
+                '..2...d.d...2..',
                 '.2...t...t...2.',
-                '..3.d.....d.3..',
+                '3..d...3...d..3',
             ],
         },
         rack: { size: 7 },
         bingo: { tiles: 7, bonus: 50 },
         blank: { count: 2, points: 0 },
         tiles: [
-            { letter: 'A', count: 8, points: 1, usefulness: 1 },
-            { letter: 'Ą', count: 2, points: 4, usefulness: 4 },
+            { letter: 'A', count: 9, points: 1, usefulness: 1 },
+            { letter: 'Ą', count: 1, points: 5, usefulness: 4 },
             { letter: 'B', count: 2, points: 3, usefulness: 3 },
-            { letter: 'C', count: 4, points: 2, usefulness: 2 },
-            { letter: 'Ć', count: 1, points: 9, usefulness: 5 },
-            { letter: 'D', count: 2, points: 3, usefulness: 3 },
+            { letter: 'C', count: 3, points: 2, usefulness: 2 },
+            { letter: 'Ć', count: 1, points: 6, usefulness: 5 },
+            { letter: 'D', count: 3, points: 2, usefulness: 2 },
             { letter: 'E', count: 7, points: 1, usefulness: 1 },
-            { letter: 'Ę', count: 1, points: 6, usefulness: 4 },
-            { letter: 'F', count: 1, points: 8, usefulness: 4 },
-            { letter: 'G', count: 2, points: 4, usefulness: 3 },
-            { letter: 'H', count: 2, points: 4, usefulness: 3 },
+            { letter: 'Ę', count: 1, points: 5, usefulness: 4 },
+            { letter: 'F', count: 1, points: 5, usefulness: 4 },
+            { letter: 'G', count: 2, points: 3, usefulness: 3 },
+            { letter: 'H', count: 2, points: 3, usefulness: 3 },
             { letter: 'I', count: 8, points: 1, usefulness: 1 },
             { letter: 'J', count: 2, points: 3, usefulness: 3 },
             { letter: 'K', count: 3, points: 2, usefulness: 2 },
-            { letter: 'L', count: 2, points: 2, usefulness: 2 },
+            { letter: 'L', count: 3, points: 2, usefulness: 2 },
             { letter: 'Ł', count: 2, points: 3, usefulness: 3 },
             { letter: 'M', count: 3, points: 2, usefulness: 2 },
-            { letter: 'N', count: 6, points: 1, usefulness: 1 },
-            { letter: 'Ń', count: 1, points: 9, usefulness: 5 },
-            { letter: 'O', count: 7, points: 1, usefulness: 1 },
-            { letter: 'Ó', count: 1, points: 9, usefulness: 4 },
+            { letter: 'N', count: 5, points: 1, usefulness: 1 },
+            { letter: 'Ń', count: 1, points: 7, usefulness: 5 },
+            { letter: 'O', count: 6, points: 1, usefulness: 1 },
+            { letter: 'Ó', count: 1, points: 5, usefulness: 4 },
             { letter: 'P', count: 3, points: 2, usefulness: 2 },
-            { letter: 'R', count: 4, points: 2, usefulness: 1 },
-            { letter: 'S', count: 3, points: 2, usefulness: 1 },
+            { letter: 'R', count: 4, points: 1, usefulness: 1 },
+            { letter: 'S', count: 4, points: 1, usefulness: 1 },
             { letter: 'Ś', count: 1, points: 5, usefulness: 4 },
             { letter: 'T', count: 3, points: 2, usefulness: 2 },
-            { letter: 'U', count: 3, points: 2, usefulness: 3 },
+            { letter: 'U', count: 2, points: 3, usefulness: 3 },
             { letter: 'W', count: 4, points: 1, usefulness: 1 },
-            { letter: 'Y', count: 4, points: 1, usefulness: 2 },
-            { letter: 'Z', count: 4, points: 2, usefulness: 1 },
-            { letter: 'Ż', count: 1, points: 6, usefulness: 4 },
+            { letter: 'Y', count: 4, points: 2, usefulness: 2 },
+            { letter: 'Z', count: 5, points: 1, usefulness: 1 },
             { letter: 'Ź', count: 1, points: 9, usefulness: 5 },
+            { letter: 'Ż', count: 1, points: 5, usefulness: 4 },
         ],
         rules: {
             exchangeMinBag: 7,

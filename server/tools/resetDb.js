@@ -58,7 +58,7 @@ async function main() {
 
     const db = await createDatabase();
     const seeded = await new VariantRepo(db).seedPresets();
-    console.log(`Baza gotowa. Wbudowane tryby: ${seeded.join(', ') || 'już były'}.`);
+    console.log(`Baza gotowa. Wbudowane tryby: ${seeded.added.join(', ') || 'brak nowych'}.`);
     await db.close();
 }
 

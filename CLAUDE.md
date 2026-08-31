@@ -93,11 +93,18 @@ zakresów, a rzuca `VariantError` tylko wtedy, gdy tryb byłby niegrywalny
 w struktury dla silnika i trzyma je w pamięci podręcznej po `id:updated_at` —
 po edycji trybu wołaj `clearVariantCache()` (robi to `VariantRepo`).
 
-Wbudowane tryby (`presets.js`) trafiają do bazy przy pierwszym starcie jako
-zwykłe rekordy. Ich definicje są autorskie: plansze wygenerowano z reguł
-geometrycznych, a zestawy klocków wyprowadzono z częstości liter w słowniku
-narzędziem `server/tools/deriveTiles.js`. Zmieniając je, uruchom to narzędzie
-zamiast wpisywać liczby z sufitu.
+Wbudowane tryby (`presets.js`) trafiają do bazy jako zwykłe rekordy i są przy
+każdym starcie **doprowadzane do stanu z kodu** — inaczej zmiana presetu nie
+dotarłaby do bazy, która przeżyła deploy na wolumenie. Tryby graczy pozostają
+nietknięte; gracz nie może też edytować trybu systemowego przez API.
+
+Dwa presety mają różne zadania i różne pochodzenie liczb:
+- **SCR** ma grać jak klasyk — standardowy układ premii, 100 klocków po 190
+  punktów, premia 50 za wyłożenie stojaka. Tych liczb się nie „poprawia".
+- **Literki** to tryb autorski: plansza z reguł geometrycznych, a rozkład
+  klocków wyprowadzony z częstości liter w słowniku narzędziem
+  `server/tools/deriveTiles.js`. Zmieniając go, uruchom to narzędzie zamiast
+  wpisywać liczby z sufitu.
 
 Po zmianie presetu sprawdź spójność:
 

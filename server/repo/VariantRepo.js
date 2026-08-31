@@ -26,34 +26,67 @@ class VariantRepo {
     }
 
     /**
-     * Zakłada wbudowane tryby, jeśli ich jeszcze nie ma.
-     * Istniejących nie nadpisuje — gracze mogą je u siebie modyfikować.
-     * @returns {Promise<string[]>} Slugi dodanych trybów
+     * Zakłada wbudowane tryby, a istniejące **doprowadza do stanu z kodu**.
+     *
+     * Tryby systemowe należą do kodu, nie do graczy — nikt nie może ich
+     * edytować przez API ({@link VariantRepo#update} odrzuca `is_system`),
+     * więc nadpisanie niczyjej pracy nie zniszczy. Bez tego zmiana presetu
+     * w repozytorium nie dotarłaby nigdy do bazy, która przetrwała deploy
+     * na podpiętym wolumenie.
+     *
+     * Trwające partie trzymają własny skompilowany tryb, więc aktualizacja
+     * ich nie ruszy — zadziała dopiero przy następnym stole.
+     *
+     * @returns {Promise<{added: string[], updated: string[]}>} Slugi trybów
+     *   dodanych i zaktualizowanych
      */
     async seedPresets() {
         const added = [];
+        const updated = [];
         const now = Date.now();
 
         for (const preset of PRESETS) {
-            if (await this.findBySlug(preset.slug)) continue;
-
             // Presety też przechodzą walidację — pilnuje to spójności definicji.
-            const definition = normalizeDefinition(preset.definition);
-            await this.db.insert('variants', {
-                slug: preset.slug,
+            const definition = JSON.stringify(normalizeDefinition(preset.definition));
+            const existing = await this.findBySlug(preset.slug);
+
+            if (!existing) {
+                await this.db.insert('variants', {
+                    slug: preset.slug,
+                    name: preset.name,
+                    description: preset.description,
+                    owner_id: null,
+                    is_system: 1,
+                    is_public: 1,
+                    definition,
+                    plays: 0,
+                    created_at: now,
+                    updated_at: now,
+                });
+                added.push(preset.slug);
+                continue;
+            }
+
+            // Ktoś mógł mieć własny tryb o tym slugu jeszcze sprzed wersji
+            // z trybami systemowymi — takiego nie ruszamy.
+            if (!existing.is_system) continue;
+
+            const unchanged = existing.definition === definition
+                && existing.name === preset.name
+                && existing.description === preset.description;
+            if (unchanged) continue;
+
+            await this.db.update('variants', {
                 name: preset.name,
                 description: preset.description,
-                owner_id: null,
-                is_system: 1,
-                is_public: 1,
-                definition: JSON.stringify(definition),
-                plays: 0,
-                created_at: now,
+                definition,
                 updated_at: now,
-            });
-            added.push(preset.slug);
+            }, { id: existing.id });
+            updated.push(preset.slug);
         }
-        return added;
+
+        if (updated.length) clearVariantCache();
+        return { added, updated };
     }
 
     /**

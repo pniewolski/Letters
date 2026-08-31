@@ -137,6 +137,10 @@ function handleServerMessage(msg) {
             break;
 
         case 'table':
+            // Stan stołu, przy którym już nie siedzimy, nie ma prawa wejść na
+            // ekran — inaczej symulacja komputerów oglądana wcześniej wskakuje
+            // na bieżącą partię przy każdym swoim ruchu.
+            if (!belongsToCurrentTable(msg.table?.id, { allowFirst: true })) return;
             setState({ table: msg.table });
             break;
 
@@ -151,14 +155,17 @@ function handleServerMessage(msg) {
             break;
 
         case 'game':
+            if (!belongsToCurrentTable(msg.state?.tableId)) return;
             handleGameState(msg.state);
             break;
 
         case 'game:move':
+            if (!belongsToCurrentTable(msg.tableId)) return;
             describeMove(msg);
             break;
 
         case 'game:over':
+            if (!belongsToCurrentTable(msg.state?.tableId)) return;
             setState({ game: msg.state, results: msg.results });
             clearPlacement();
             clearPreviews();
@@ -166,6 +173,7 @@ function handleServerMessage(msg) {
             break;
 
         case 'chat':
+            if (!belongsToCurrentTable(msg.tableId)) return;
             pushFeed({
                 kind: msg.entry.system ? 'system' : 'chat',
                 name: msg.entry.system ? null : msg.entry.name,
@@ -174,6 +182,7 @@ function handleServerMessage(msg) {
             break;
 
         case 'preview':
+            if (!belongsToCurrentTable(msg.tableId)) return;
             receivePreview(msg.slot, msg.tiles);
             break;
 
@@ -184,6 +193,25 @@ function handleServerMessage(msg) {
         default:
             break;
     }
+}
+
+/**
+ * Czy wiadomość dotyczy stołu, przy którym faktycznie siedzimy.
+ *
+ * Serwer pilnuje, żeby gracz był tylko przy jednym stole, ale przy przesiadce
+ * zdarzenia poprzedniego mogą być jeszcze w drodze. Bez tego filtra ich stan
+ * podmieniłby planszę pod rękami gracza.
+ *
+ * @param {number|undefined} tableId - Stół, którego dotyczy wiadomość
+ * @param {object} [options]
+ * @param {boolean} [options.allowFirst=false] - Przyjmij, gdy nie mamy jeszcze
+ *   żadnego stołu (pierwszy stan po dołączeniu potrafi wyprzedzić odpowiedź)
+ * @returns {boolean}
+ */
+function belongsToCurrentTable(tableId, { allowFirst = false } = {}) {
+    if (tableId == null) return true;          // starszy serwer bez znacznika
+    if (!store.table) return allowFirst;
+    return store.table.id === tableId;
 }
 
 /**

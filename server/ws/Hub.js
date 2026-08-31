@@ -310,6 +310,7 @@ class Hub {
             for (const userId of this.audienceOf(table)) {
                 this.sendToUser(userId, {
                     type: 'game:move',
+                    tableId: table.id,
                     move,
                     playerName: seat ? seat.name : null,
                     isComputer: seat ? seat.type === 'computer' : false,
@@ -329,7 +330,7 @@ class Hub {
 
         tables.on('chat', ({ table, entry }) => {
             for (const userId of this.audienceOf(table)) {
-                this.sendToUser(userId, { type: 'chat', scope: 'table', entry });
+                this.sendToUser(userId, { type: 'chat', scope: 'table', tableId: table.id, entry });
             }
         });
     }
