@@ -1,137 +1,166 @@
-# CLAUDE.md — Literkowa Gra (Scrabble)
+# CLAUDE.md — Literki
 
-Serwer gry w Scrabble po polsku: Node.js + Express + WebSocket na backendzie,
-waniliowy JS (ES modules) na froncie. Bez frameworków, bez buildu, bez testów
-automatycznych. Kod i komentarze są **po polsku** — trzymaj się tego.
+Portal do gier słownych: Node.js + Express + WebSocket na backendzie, waniliowy
+JS (moduły ES) na froncie. Bez frameworków, bez builda, bez testów
+automatycznych. Kod, komentarze i komunikaty są **po polsku** — trzymaj się tego.
+
+Pełny opis projektu dla ludzi: [README.md](README.md). Ten plik zbiera to,
+o czym łatwo zapomnieć przy zmianach.
 
 ## Uruchamianie
 
 ```powershell
 npm start          # node server/server.js  (http://localhost:8080)
 npm run dev        # to samo z --watch
+npm run db:reset   # skasowanie i odtworzenie bazy (usuwa konta i partie!)
 ```
 
-Nie ma testów jednostkowych ani lintera. Weryfikacja odbywa się ręcznie przez
-skrypty w `server/` (patrz „Skrypty pomocnicze”) albo przez uruchomienie serwera.
+Wymagany Node **22.5+** — baza działa na wbudowanym `node:sqlite`. Obraz
+Dockera używa `node:24-slim`.
 
-Docker: `Dockerfile` (node:20-slim, port 8080). Express i WebSocket dzielą jeden port.
+Weryfikacja odbywa się ręcznie: przez skrypty w `server/tools/` albo przez
+uruchomienie serwera.
 
-## Architektura
+## Trzy rzeczy, które łatwo zepsuć
+
+1. **Reguły gry nie należą do kodu.** Rozmiar planszy, punktacja, ilości liter,
+   premie i kolory pochodzą z `CompiledVariant` (`server/variant/`). Jeśli
+   wpisujesz w silniku `15`, `7` albo `50` — cofnij się i weź to z trybu gry.
+   To samo dotyczy frontu: punktacja i alfabet przychodzą w stanie partii.
+
+2. **Słownik ładuje się raz na proces.** Budowa Trie z 3,2 mln słów zajmuje
+   ~2 s i sporo pamięci. Instancja `WordDictionary` jest tworzona w
+   `server.js` i przekazywana dalej. Nie twórz nowej na żądanie.
+
+3. **`TableManager` nie zna WebSocketów.** Emituje zdarzenia (`lobby`, `table`,
+   `game`, `move`, `over`, `chat`), a `ws/Hub.js` zamienia je na komunikaty.
+   Nie wywołuj `ws.send` z warstwy lobby — inaczej logiki nie da się
+   przetestować bez serwera.
+
+Dawna pułapka z `process.chdir` **już nie istnieje**: `WordDictionary` liczy
+ścieżkę słownika względem swojego pliku, a plansza i worek nie czytają niczego
+z dysku. Skrypty można odpalać z dowolnego katalogu.
+
+## Architektura w skrócie
 
 ```
 server/
-  server.js          punkt wejścia: Express (statyki z /public) + WebSocketServer + /api/*
-  config.json        tytuł, alfabet, flagi, kolory planszy
-  layout.json        mnożniki pól 15x15
-  letters.json       ŹRÓDŁO PRAWDY: punkty, ilości i „użyteczność” liter
-  slownik.txt        ~3,2 mln słów, po jednym w wierszu, małe litery
-  board/
-    Board.js         plansza 15x15, mnożniki, getPointsForLetter()
-    DrawstringBag.js worek liter (ilości z letters.json)
-    WordDictionary.js słownik na Trie w układzie CSR (tablice typowane, oszczędny RAM)
-    Solver.js        generowanie i punktowanie ruchów
-    BestMoveFinder.js wygodna fasada nad Board+Solver (buduj stan → getSolution())
-  game/
-    GameManager.js   SINGLETON — jeden słownik dla wszystkich gier, mapa userId→gra
-    Game.js          pojedyncza rozgrywka, tury, ruch komputera
-    Table.js         stan stołu: punkty, stojaki, worek
-    Strategy.js      decyzja AI: położyć słowo czy wymienić litery (próg ~25 pkt)
-  ai/
-    imageSolver.js   rozpoznanie planszy ze zdjęcia przez LLM (OpenAI | Gemini)
-public/
-  index.html, style.css
-  js/                moduły ES: main.js (routing WS), net.js, state.js, board.js,
-                     rack.js, game.js, config.js, hints.js, livePreview.js, chat.js,
-                     blank.js, clock.js, dom.js, solver.js
-  solver.html        osobna strona „rozwiąż ze zdjęcia”
+  server.js        start: baza → słownik → TableManager → Express + WebSocket
+  db/              warstwa bazy (SQLite domyślnie, MySQL po zmianie DB_DRIVER)
+  variant/         definicja, walidacja i kompilacja trybów gry + presety
+  board/           Board, DrawstringBag, WordDictionary, Solver, BestMoveFinder
+  game/            Game (tury, koniec partii), Table (stan), Strategy (AI)
+  lobby/           GameTable (miejsca, zegar), TableManager (rejestr, przebieg)
+  repo/            dostęp do danych (User, Session, Variant, Stats, Game, Friend)
+  auth/            hashowanie haseł i usługa kont
+  ws/              Hub (połączenia, rozsyłanie) + handlers (akcje)
+  app/routes.js    REST API
+  ai/              solver ze zdjęcia
+  tools/           skrypty pomocnicze
+public/js/
+  main.js router.js store.js api.js net.js ui.js
+  game/            plansza, stojak, blank, podgląd, miniaturka
+  screens/         home, lobby, game, ranking, profile, variants,
+                   variantEditor, friends, auth
 ```
 
-### Dwie ważne pułapki
+## Tryby gry — jedyne źródło reguł
 
-1. **`process.chdir(__dirname)` w `server.js`.** Klasy `Board`, `DrawstringBag`
-   i `Strategy` czytają `letters.json` / `layout.json` **ścieżką względną**.
-   Każdy skrypt uruchamiany poza `server.js` musi startować z katalogu `server/`
-   albo sam zrobić `chdir`, inaczej poleci `ENOENT`.
-2. **Słownik ładuje się raz.** `GameManager` jest singletonem i trzyma jedną
-   instancję `WordDictionary` (`await dict.ready`). Nie twórz nowego słownika
-   na żądanie — budowa Trie z 3,2 mln słów jest kosztowna.
+Definicja trybu (`server/variant/schema.js`) opisuje wszystko: planszę
+(rozmiar + siatka znaków), zestaw liter z ilościami i punktacją, blanki,
+stojak, premię za wyłożenie stojaka, reguły końcówki i kolory.
 
-## Konfiguracja liter — jedno źródło prawdy
+Znaki siatki planszy:
 
-`server/letters.json` to **jedyne** miejsce z punktacją, ilościami i użytecznością liter.
-Front **nie duplikuje** tych danych: `server.js` spłaszcza sekcję `points`
-(`{ "1": ["A",...] }` → `{ A: 1, ... }`, plus `'*': 0`) i wystawia ją razem z
-`config.json` i `layout.json` pod `GET /api/config`; `public/js/config.js` pobiera
-to przez `loadConfig()` i udostępnia `pointsOf(letter)`.
+| znak | pole |
+|------|------|
+| `.` | zwykłe |
+| `@` | startowe |
+| `2` / `3` / `4` | podwójna / potrójna / poczwórna wartość słowa |
+| `d` / `t` / `q` | podwójna / potrójna / poczwórna wartość litery |
 
-Zmieniając punktację edytuj **tylko** `letters.json`. Nie wpisuj wartości na sztywno
-w kodzie ani we froncie. Oficjalna polska dystrybucja (100 płytek, suma 190 pkt):
+`normalizeDefinition()` uzupełnia braki i przycina wartości do bezpiecznych
+zakresów, a rzuca `VariantError` tylko wtedy, gdy tryb byłby niegrywalny
+(np. worek mniejszy niż suma stojaków). `compileVariant()` zamienia definicję
+w struktury dla silnika i trzyma je w pamięci podręcznej po `id:updated_at` —
+po edycji trybu wołaj `clearVariantCache()` (robi to `VariantRepo`).
 
-| pkt | litery |
-|-----|--------|
-| 1 | A E I N O R S W Z |
-| 2 | C D K L M P T Y |
-| 3 | B G H J Ł U |
-| 5 | Ą Ę F Ó Ś Ż |
-| 6 | Ć |
-| 7 | Ń |
-| 9 | Ź |
-| 0 | `*` (blank, 2 szt.) |
+Wbudowane tryby (`presets.js`) trafiają do bazy przy pierwszym starcie jako
+zwykłe rekordy. Ich definicje są autorskie: plansze wygenerowano z reguł
+geometrycznych, a zestawy klocków wyprowadzono z częstości liter w słowniku
+narzędziem `server/tools/deriveTiles.js`. Zmieniając je, uruchom to narzędzie
+zamiast wpisywać liczby z sufitu.
 
-Sekcja `usefulness` to **osobna heurystyka AI** (wyższa = mniej przydatna, chętniej
-wymieniana przez `Strategy`) — nie ma nic wspólnego z punktacją i nie należy jej
-synchronizować z `points`.
-
-Po zmianie `letters.json` sprawdź spójność:
+Po zmianie presetu sprawdź spójność:
 
 ```powershell
-node -e "const d=require('./server/letters.json');const q={};for(const[k,v]of Object.entries(d.quantities))v.forEach(l=>q[l]=+k);console.log('plytek:',Object.values(q).reduce((a,b)=>a+b,0))"
+node -e "const{compileVariant}=require('./server/variant/compile');const{PRESETS}=require('./server/variant/presets');for(const p of PRESETS)console.log(p.slug,JSON.stringify(compileVariant(p.definition).summary))"
 ```
 
-## Protokół WebSocket
+## Baza danych
 
-Klient → serwer: `{ type: "akcja", ...dane }`
-Serwer → klient: `{ type: "akcja:response", success, ... }` albo push `{ type: "zdarzenie", ... }`
+Schemat jest zapisany **raz**, w `server/db/migrations.js`, ze znacznikami
+typów (`{{PK}}`, `{{STR:64}}`, `{{TEXT}}`, `{{BIGINT}}`, `{{BOOL}}`,
+`{{ENGINE}}`), które `db/types.js` tłumaczy na SQLite albo MySQL. Zapytania
+pisz z placeholderami `?`; konstrukcje różniące się między silnikami (UPSERT)
+opakowuje `Database.upsert()`.
 
-Akcje: `createGame` (`mode: computer|human|compcomp`), `hostGame`, `listLobby`,
-`joinGame`, `leaveGame`, `makeMove`, `replaceLetters`, `pass`, `getState`, `hint`,
-`chat`, `livePreview`.
+Dodając tabelę lub kolumnę: **dopisz nową migrację**, nie zmieniaj istniejącej —
+zastosowane migracje są zapisane w `schema_migrations`.
 
-Pushe: `connected`, `lobby`, `gameState`, `opponentJoined`, `opponentMoved`,
-`opponentPassed`, `opponentReplaced`, `opponentLeft`, `opponentDisconnected`,
-`computerMoved`, `compMove`, `gameOver`, `chatMessage`, `livePreview`, `error`.
+Świadomie nie ma kluczy obcych: integralności pilnują repozytoria, a brak FK
+upraszcza czyszczenie kont gości i przenosiny między silnikami.
 
-Dodając akcję: handler w `server.js` (zwraca obiekt odpowiedzi), metoda w
-`GameManager.js`, `case` w `handleMessage()` w `public/js/main.js`.
+Baza to plik w `DATA_DIR` (domyślnie `server/data`). Na hostingu **musi**
+wskazywać na wolumen, inaczej dane znikają przy deployu.
 
-REST: `GET /api/config`, `POST /api/solve` (zdjęcie planszy).
+## Protokół
 
-## Solver ze zdjęcia (AI)
+REST (`/api`) — konta, profile, ranking, tryby gry, solver ze zdjęcia.
+WebSocket — lobby i rozgrywka.
 
-Szczegóły w `SOLVER.md`. Klucze w `server/ai.config.json` (w `.gitignore`;
-wzorzec: `ai.config.example.json`) lub przez `AI_PROVIDER` / `AI_API_KEY` / `AI_MODEL`.
-Dostawca wykrywany z nazwy modelu (`gemini*` → Gemini, natywne API z nagłówkiem
-`X-goog-api-key`, **nie** `Bearer`). Nigdy nie commituj kluczy.
+```
+klient  → { type, rid?, ...dane }
+serwer  → { type: "<type>:response", rid, success, ... }   (odpowiedź)
+serwer  → { type: "lobby" | "table" | "game" | ... }        (zdarzenie)
+```
 
-## Skrypty pomocnicze (uruchamiaj z katalogu `server/`)
+Akcje: `auth`, `sync`, `ping`, `lobby`, `table:create`, `table:join`,
+`table:joinCode`, `table:leave`, `table:start`, `table:rematch`, `table:chat`,
+`game:move`, `game:exchange`, `game:pass`, `game:resign`, `game:hint`,
+`game:state`, `game:preview`.
 
-| plik | do czego |
-|------|----------|
-| `main.js` | piaskownica solvera na jednej planszy |
-| `compVsCompTest.js` | pełna partia komputer vs komputer |
-| `humanVsCompTest.js` | partia w konsoli (readline) |
-| `board/dictBench.js` | benchmark poprawności/szybkości słownika |
-| `board/dictMem.js` | zużycie pamięci przez słownik |
-| `board/cheaterTest.js`, `game/testGameManager.js`, `ai/testImageSolver.js` | testy ręczne |
+Zdarzenia: `hello`, `lobby`, `table`, `table:closed`, `game`, `game:move`,
+`game:over`, `chat`, `preview`, `error`.
+
+Dodając akcję: handler w `server/ws/handlers.js` (rzuć `fail('...')` przy
+błędzie walidacji — komunikat trafi wprost do gracza), metoda w
+`TableManager`, obsługa w `handleServerMessage()` w `public/js/main.js`.
+
+Handler z `requiresAuth = false` działa przed zalogowaniem.
+
+## Konta i sesje
+
+Goście mają wiersz w `users` z `is_guest = 1`, więc partie i statystyki
+odwołują się do jednego typu identyfikatora. Token gościa trafia do
+`sessionStorage` (ginie z kartą), token konta do `localStorage`.
+Awans gościa na pełne konto zachowuje dorobek (`AuthService.upgradeGuest`).
+
+Ranking (Elo) zmienia się tylko w partiach między zarejestrowanymi graczami —
+pilnuje tego `StatsRepo.applyGameResult`, więc warstwa wyżej nie musi.
 
 ## Konwencje
 
-- Komentarze, nazwy w UI i komunikaty błędów **po polsku**; JSDoc nad klasami i
-  metodami publicznymi (z `@example` tam, gdzie to pomaga) — kontynuuj ten styl.
-- Front: moduły ES z `import`/`export`, bez bundlera. `net.js` nie zna logiki gry —
-  handler wiadomości wstrzykuje `main.js` przez `setMessageHandler()`, żeby nie
-  powstawały zależności cykliczne. Zachowaj ten podział.
-- Wszystkie litery wewnętrznie **wielkimi literami**; słownik `slownik.txt` jest
-  małymi — porównania wymagają normalizacji.
-- Blank: `isBlank: true` + wybrana litera, zawsze 0 pkt (patrz `blank.js`).
-- Sekcje w większych plikach oddzielane komentarzem `// ─────` — trzymaj konwencję.
+- Komentarze, nazwy w interfejsie i komunikaty błędów **po polsku**.
+  JSDoc nad klasami i metodami publicznymi, z `@example` tam, gdzie pomaga.
+- Front: moduły ES, bez bundlera. `net.js` nie zna logiki gry — handler
+  wiadomości wstrzykuje `main.js` przez `onMessage()`. Ekrany zwracają funkcję
+  sprzątającą; router woła ją przed przejściem dalej.
+- Stan frontu żyje w `store.js`; ekrany zapisują się na klucze przez
+  `subscribe()` zamiast szukać się nawzajem.
+- Wszystkie litery wewnętrznie **wielkimi**; `slownik.txt` jest małymi —
+  porównania wymagają normalizacji.
+- Blank: `isBlank: true` + wybrana litera, zawsze 0 punktów. Klient **musi**
+  wskazać, na których polach leży blank — serwer nie zgaduje.
+- Sekcje w większych plikach oddzielaj komentarzem `// ─────`.
+- Nowe pliki zapisuj z końcami linii LF (pilnuje tego `.gitattributes`).

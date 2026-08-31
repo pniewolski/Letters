@@ -1,6 +1,6 @@
 /**
  * @file imageSolver.js
- * @description Rozwiązywanie gry Scrabble na podstawie zdjęcia planszy.
+ * @description Rozwiązywanie partii gry słownej na podstawie zdjęcia planszy.
  *
  * Przepływ:
  * 1. Zdjęcie jest skalowane do maks. 800 px (dłuższy bok) — mniejszy transfer i koszt.
@@ -130,7 +130,7 @@ async function resizeImage(buffer) {
  */
 function buildPrompt(alphabet) {
     return [
-        'Jesteś ekspertem rozpoznawania planszy do gry w Scrabble ze zdjęcia.',
+        'Jesteś ekspertem rozpoznawania planszy gry słownej ze zdjęcia.',
         'Na obrazie widnieje plansza 15x15 oraz stojak (rack) z literami gracza.',
         'UWAGA: Gra jest w toku — na planszy NA PEWNO leżą litery. Jeśli widzisz pustą planszę, przyjrzyj się dokładniej kafelkom na siatce.',
         '',
@@ -579,10 +579,11 @@ function normalizeRackLetter(raw, allowed) {
 /**
  * Buduje instancję Board z rozpoznanej planszy.
  * @param {string[]} rows - 15 łańcuchów po 15 znaków (wiersze od góry)
+ * @param {import('../variant/compile').CompiledVariant} variant - Tryb gry (punktacja pól i liter)
  * @returns {Board}
  */
-function buildBoard(rows) {
-    const board = new Board();
+function buildBoard(rows, variant) {
+    const board = new Board(variant);
     for (let y = 0; y < SIZE; y++) {
         const row = rows[y];
         for (let x = 0; x < SIZE; x++) {
@@ -611,7 +612,7 @@ function buildBoard(rows) {
  * @returns {Array<object>} Sformatowane ruchy
  */
 function solveTopMoves(board, rack, dict, limit = 20) {
-    const solver = new Solver(dict);
+    const solver = new Solver(dict, board.variant);
     const moves = solver.solve(board, rack); // posortowane malejąco wg punktów
 
     const seen = new Set();
@@ -668,7 +669,8 @@ function formatMove(m) {
  * @returns {Promise<{success: boolean, board: string[], rack: string[], moves: Array<object>}>}
  */
 async function solveFromImage(imageBuffer, dict, opts = {}) {
-    const alphabet = opts.alphabet || 'AĄBCĆDEĘFGHIJKLŁMNŃOÓPRSŚTUWYZŹŻ';
+    if (!opts.variant) throw new Error('Rozwiązywanie ze zdjęcia wymaga trybu gry (opts.variant).');
+    const alphabet = opts.alphabet || opts.variant.alphabet;
     const limit = opts.limit || 20;
 
     log(`Start: obraz ${imageBuffer.length} B, limit ruchów=${limit}`);
@@ -678,7 +680,7 @@ async function solveFromImage(imageBuffer, dict, opts = {}) {
     const recognized = await callVisionModel(resized.buffer, resized.mime, alphabet);
     log(`Rozpoznany stojak: [${recognized.rack.join(' ') || '—'}]`);
 
-    const board = buildBoard(recognized.board);
+    const board = buildBoard(recognized.board, opts.variant);
 
     // Zdjęcie samej planszy (bez liter gracza) — nie da się policzyć ruchów.
     if (!recognized.rack.length) {

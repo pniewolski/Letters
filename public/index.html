@@ -2,117 +2,28 @@
 <html lang="pl">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Scrabble</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+    <meta name="description" content="Literki — portal dla miłośników gier słownych. Graj z innymi, twórz własne tryby gry, zbieraj skalpy i wspinaj się w rankingu.">
+    <meta name="theme-color" content="#141b2d">
+    <title>Literki</title>
     <link rel="stylesheet" href="style.css">
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='6' fill='%23d4a94a'/><text x='16' y='23' font-size='20' font-family='system-ui' font-weight='700' text-anchor='middle' fill='%231a1a2e'>L</text></svg>">
 </head>
 <body>
 
-<!-- ═══════════════════ EKRAN STARTOWY ═══════════════════ -->
-<div id="screen-menu" class="screen active">
-    <div class="menu-box">
-        <h1 id="app-title">Scrabble</h1>
-        <button id="btn-vs-computer">Graj z komputerem</button>
-        <button id="btn-vs-human">Graj z człowiekiem (sieć)</button>
-        <button id="btn-vs-compcomp">Komputer vs Komputer (podgląd)</button>
-        <a href="solver.html" class="solver-menu-link">🧩 Rozwiąż grę ze zdjęcia / ręcznie</a>
-        <div id="join-section" class="hidden">
-            <input type="text" id="input-player-name" placeholder="Twoje imię" maxlength="24">
-            <button id="btn-host">🎮 Hostuj grę</button>
-            <div class="online-block">
-                <div class="online-title">Gracze oczekujący online:</div>
-                <ul id="online-list" class="online-list">
-                    <li class="online-empty">Nikt jeszcze nie hostuje gry.</li>
-                </ul>
-            </div>
-        </div>
-        <p id="menu-status" class="status"></p>
-    </div>
-</div>
+<header id="app-header" class="app-header"></header>
 
-<!-- ═══════════════════ EKRAN GRY ═══════════════════ -->
-<div id="screen-game" class="screen">
-    <div class="game-layout">
+<main id="view" class="app-view">
+    <div class="loading">Ładowanie portalu…</div>
+</main>
 
-        <!-- PANEL LEWY: info + czat -->
-        <aside class="panel-left">
-            <div class="info-box">
-                <div class="player-info mine">
-                    <span id="my-label" class="label">Ty:</span>
-                    <span id="my-points" class="points">0</span> pkt
-                    <span class="timer">⏱ <span id="my-clock">0:00</span></span>
-                </div>
-                <div class="player-info opponent">
-                    <span id="opp-label" class="label">Przeciwnik:</span>
-                    <span id="opp-points" class="points">0</span> pkt
-                    <span id="opp-rack-info" class="rack-info">(<span id="opp-rack-size">7</span> liter)</span>
-                    <span class="timer">⏱ <span id="opp-clock">0:00</span></span>
-                </div>
-                <div class="game-meta">
-                    <div>Worek: <span id="bag-size">100</span></div>
-                    <div>Tura: <span id="turn-indicator">-</span></div>
-                </div>
-            </div>
-
-            <div class="chat-box">
-                <div id="chat-messages" class="chat-messages"></div>
-                <div class="chat-input-row">
-                    <input type="text" id="chat-input" placeholder="Wiadomość...">
-                    <button id="btn-chat-send">▶</button>
-                </div>
-            </div>
-        </aside>
-
-        <!-- CENTRUM: plansza -->
-        <main class="board-area">
-            <div class="board-wrap">
-                <div class="board-corner"></div>
-                <div id="col-labels" class="col-labels"></div>
-                <div id="row-labels" class="row-labels"></div>
-                <div id="board" class="board"></div>
-            </div>
-
-            <!-- Stojak gracza (oraz druga podstawka w trybie widza) -->
-            <div class="rack-area">
-                <div id="rack-label-1" class="rack-label spectator-only"></div>
-                <div id="rack" class="rack"></div>
-                <div id="rack-label-2" class="rack-label spectator-only"></div>
-                <div id="rack2" class="rack spectator-only"></div>
-            </div>
-
-            <!-- Przyciski akcji -->
-            <div id="actions" class="actions">
-                <button id="btn-confirm" class="btn-action btn-green">✓ Zatwierdź</button>
-                <button id="btn-recall" class="btn-action">↩ Cofnij</button>
-                <button id="btn-pass" class="btn-action">⏭ Pas</button>
-                <button id="btn-exchange" class="btn-action">🔄 Wymień</button>
-                <button id="btn-hint" class="btn-action btn-hint">💡 Podpowiedź</button>
-                <button id="btn-menu" class="btn-action btn-menu">⏏ Menu</button>
-            </div>
-        </main>
-
-        <!-- PANEL PRAWY: podgląd live + hinty -->
-        <aside class="panel-right">
-            <div id="hint-box" class="hint-box hidden">
-                <h3>Podpowiedzi</h3>
-                <ul id="hint-list"></ul>
-            </div>
-            <div id="live-preview-info" class="live-info hidden">
-                <h4>Przeciwnik układa...</h4>
-                <div id="live-dots"></div>
-            </div>
-        </aside>
-
-    </div>
-</div>
-
-<!-- ═══════════════════ MODAL: wybór litery blanka ═══════════════════ -->
-<div id="modal-blank" class="modal hidden">
-    <div class="modal-content">
-        <h3>Wybierz literę dla blanka</h3>
-        <div id="blank-letters" class="blank-grid"></div>
-    </div>
-</div>
+<footer class="app-footer">
+    <span>Literki — portal dla miłośników gier słownych.</span>
+    <span class="muted tiny">
+        Zasady, plansze i zestawy liter są konfigurowalnymi danymi — każdy tryb gry można podejrzeć i przerobić
+        w <a href="#/tryby">edytorze trybów</a>.
+    </span>
+</footer>
 
 <script type="module" src="js/main.js"></script>
 </body>

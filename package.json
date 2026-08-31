@@ -1,14 +1,19 @@
 {
-  "name": "scrabble-server",
-  "version": "1.0.0",
-  "description": "Serwer gry Scrabble z WebSocket",
+  "name": "literki",
+  "version": "2.0.0",
+  "description": "Literki — portal do gier słownych: konta, stoły, ranking i konfigurowalne tryby gry",
   "main": "server/server.js",
   "scripts": {
     "start": "node server/server.js",
-    "dev": "node --watch server/server.js"
+    "dev": "node --watch server/server.js",
+    "db:reset": "node server/tools/resetDb.js",
+    "tiles:derive": "node server/tools/deriveTiles.js",
+    "sim": "node server/tools/simulate.js",
+    "play": "node server/tools/playConsole.js",
+    "bench": "node server/board/dictBench.js"
   },
   "engines": {
-    "node": ">=18"
+    "node": ">=22.5"
   },
   "dependencies": {
     "express": "^4.20.0",
@@ -16,5 +21,8 @@
     "multer": "^2.2.0",
     "node-fetch": "^2.7.0",
     "ws": "^8.21.0"
-  }
+  },
+  "optionalDependencies": {},
+  "license": "UNLICENSED",
+  "private": true
 }

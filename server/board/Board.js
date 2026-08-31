@@ -1,235 +1,202 @@
-const fs = require('fs');
-
 /**
  * @class Board
- * @description Reprezentuje planszę do gry w Scrabble o wymiarach 15x15.
- * Przechowuje stan pól (litery, blanki, bieżące ruchy) oraz mnożniki punktowe
- * i wartości punktowe liter. Ładuje konfigurację z plików JSON (layout.json, letters.json).
+ * @description Plansza do gry — rozmiar, mnożniki pól i punktacja liter
+ * pochodzą z **trybu gry** (`CompiledVariant`), a nie z plików na dysku.
+ * Dzięki temu każdy stół może mieć własną planszę, a tworzenie planszy jest
+ * tanie (żadnego czytania i parsowania JSON-a przy każdej instancji).
+ *
+ * Pola adresujemy `tiles[x][y]`, gdzie `x` to kolumna, a `y` wiersz.
  *
  * @example
- * const Board = require('./Board');
- * const board = new Board();
- * board.putWord([{letter:"K", isBlank:false, isCurrent:true}], 7, 7, true);
+ * const { compileVariant } = require('../variant/compile');
+ * const { LITERKI } = require('../variant/presets');
+ *
+ * const variant = compileVariant(LITERKI.definition);
+ * const board = new Board(variant);
+ * board.putWord([{ letter: 'K', isBlank: false, isCurrent: true }], 7, 7, true);
  * board.consolePreviewBoard();
  */
 class Board {
     /**
-     * Tworzy nową, pustą planszę 15x15.
-     * Automatycznie ładuje mnożniki pól (layout.json) i wartości punktowe liter (letters.json).
+     * Tworzy pustą planszę o rozmiarze wynikającym z trybu gry.
+     * @param {import('../variant/compile').CompiledVariant} variant - Skompilowany tryb gry
+     * @throws {Error} Gdy nie podano trybu gry
      */
-    constructor() {
+    constructor(variant) {
+        if (!variant) throw new Error('Board wymaga trybu gry (CompiledVariant).');
+
+        /** @type {import('../variant/compile').CompiledVariant} */
+        this.variant = variant;
+        /** @type {number} Bok planszy. */
+        this.size = variant.size;
+
         this.tiles = [];
-        for (let i = 0; i < 15; i++) {
-            this.tiles[i] = [];
-            for (let j = 0; j < 15; j++) {
-                this.tiles[i][j] = {
-                    letter: null,
-                    isBlank: false,
-                    isCurrent: false,
-                };
+        for (let x = 0; x < this.size; x++) {
+            this.tiles[x] = [];
+            for (let y = 0; y < this.size; y++) {
+                this.tiles[x][y] = { letter: null, isBlank: false, isCurrent: false };
             }
         }
-        this.getBoardMultiply();
-        this.loadPoints();
+
+        /** @type {number} Licznik postawionych liter — `isEmpty()` bez przeglądania planszy. */
+        this._placed = 0;
     }
 
     /**
-     * Ładuje wartości punktowe liter z pliku letters.json.
-     * Wynik zapisywany jest w this.points jako obiekt { punkty: [litery] }.
-     * @private
-     */
-    loadPoints() {
-        const pointsJson = fs.readFileSync('letters.json', 'utf-8');
-        this.points = JSON.parse(pointsJson).points;
-    }
-
-
-    /**
-     * Zwraca liczbę punktów za podaną literę.
-     * @param {string} litera - Litera (wielkość liter nie ma znaczenia)
-     * @returns {number} Liczba punktów za literę (0 jeśli litera nieznana)
+     * Zwraca liczbę punktów za literę wg trybu gry.
+     * @param {string} letter - Litera (wielkość liter bez znaczenia)
+     * @returns {number} Punkty (0 dla nieznanego znaku)
      *
      * @example
      * board.getPointsForLetter('A'); // => 1
-     * board.getPointsForLetter('Ź'); // => 9
      */
-    getPointsForLetter(litera) {
-        const literaUpper = litera.toUpperCase();
-
-        for (const [punktyZaLitere, litery] of Object.entries(this.points)) {
-            //console.log("punktyZaLitere",punktyZaLitere,"litery",litery);
-            // Sprawdź, czy `litery` faktycznie jest tablicą
-            if (Array.isArray(litery) && litery.includes(literaUpper)) {
-                return parseInt(punktyZaLitere);
-            }
-        }
-        return 0; // nieznana litera lub znak specjalny
-    }
-
-
-
-    /**
-     * Ładuje konfigurację mnożników planszy z pliku layout.json.
-     * Mnożniki zapisywane są w this.multiplies jako tablica 15x15 obiektów {w, l}
-     * gdzie w = mnożnik słowa, l = mnożnik litery.
-     * @private
-     */
-    getBoardMultiply() {
-        const multiJson = fs.readFileSync('layout.json', 'utf-8');
-        this.multiplies = JSON.parse(multiJson);
+    getPointsForLetter(letter) {
+        return this.variant.pointsOf(letter);
     }
 
     /**
-     * Zwraca obiekt mnożników dla danego pola planszy.
-     * @param {number} x - Współrzędna X (kolumna, 0-14)
-     * @param {number} y - Współrzędna Y (wiersz, 0-14)
-     * @returns {{w: number, l: number}} Obiekt z mnożnikiem słowa (w) i litery (l)
+     * Zwraca mnożniki pola.
+     * @param {number} x - Kolumna
+     * @param {number} y - Wiersz
+     * @returns {{w: number, l: number}} Mnożnik słowa i litery
      */
-    getBonus(x,y) {
-        return this.multiplies[x][y];
+    getBonus(x, y) {
+        return this.variant.bonusAt(x, y);
     }
 
     /**
-     * Zwraca aktualną tablicę pól planszy.
-     * @returns {Array<Array<{letter: string|null, isBlank: boolean, isCurrent: boolean}>>} Tablica 15x15 pól
+     * Czy pole jest polem startowym (pierwsze słowo musi je pokryć).
+     * @param {number} x
+     * @param {number} y
+     * @returns {boolean}
+     */
+    isStart(x, y) {
+        return this.variant.isStart(x, y);
+    }
+
+    /**
+     * Zwraca tablicę pól planszy.
+     * @returns {Array<Array<{letter: string|null, isBlank: boolean, isCurrent: boolean}>>}
      */
     getTiles() {
         return this.tiles;
     }
 
     /**
-     * Ustawia tablicę pól planszy (nadpisuje istniejącą).
-     * @param {Array<Array<{letter: string|null, isBlank: boolean, isCurrent: boolean}>>} tiles - Nowa tablica pól
+     * Podmienia tablicę pól (używane przy klonowaniu i wczytywaniu stanu).
+     * @param {Array<Array<object>>} tiles - Nowa tablica pól
      */
     setTiles(tiles) {
         this.tiles = tiles;
-    }
-
-    /**
-     * Wyświetla aktualny stan planszy w konsoli.
-     * Puste pola oznaczone są '-', blanki małymi literami, normalne litery dużymi.
-     */
-    consolePreviewBoard() {
-        let result = "Stan planszy:\n";
-        for (let j = 0; j < 15; j++) {
-            for (let i = 0; i < 15; i++) {
-                if (this.tiles[i][j].letter === null) {
-                    result += "-";
-                } else {
-                    if (this.tiles[i][j].isBlank) {
-                        result += this.tiles[i][j].letter.toLowerCase();
-                    } else {
-                        result += this.tiles[i][j].letter;
-                    }
-                }
-            }
-            result += "\n";
-        }
-        console.log(result);
-    }
-
-    
-    /**
-     * Tworzy głęboką kopię planszy (nowa instancja Board z skopiowanymi polami).
-     * @returns {Board} Nowa instancja Board z identycznym stanem pól
-     *
-     * @example
-     * const copy = board.cloneBoard();
-     * // modyfikacje copy nie wpływają na oryginał
-     */
-    cloneBoard() {
-        let result = new Board();
-        let tilesCopy = [];
-        for (let i = 0; i < 15; i++) {
-            tilesCopy[i] = [];
-            for (let j = 0; j < 15; j++) {
-                tilesCopy[i][j] = {...this.tiles[i][j]};
-            }
-        }
-        result.setTiles(tilesCopy);
-        return result;
-    }
-
-    /**
-     * Umieszcza słowo na planszy.
-     * Litery są wstawiane tylko na puste pola — istniejące litery nie są nadpisywane.
-     * @param {Array<{letter: string, isBlank: boolean, isCurrent: boolean}>} word - Tablica obiektów liter do umieszczenia
-     * @param {number} x - Współrzędna X (kolumna) początku słowa
-     * @param {number} y - Współrzędna Y (wiersz) początku słowa
-     * @param {boolean} horizontal - true = słowo poziome, false = słowo pionowe
-     *
-     * @example
-     * board.putWord([
-     *   {letter:"S", isBlank:false, isCurrent:true},
-     *   {letter:"O", isBlank:false, isCurrent:true},
-     *   {letter:"L", isBlank:false, isCurrent:true}
-     * ], 5, 7, true);
-     */
-    putWord(word, x, y, horizontal) {
-        for (let i = 0; i < word.length; i++) {
-            let currX = x + (horizontal ? i : 0);
-            let currY = y + (!horizontal ? i : 0);
-            if (this.tiles[currX][currY].letter == null) {
-                this.tiles[currX][currY].letter = word[i].letter;
-                this.tiles[currX][currY].isCurrent = word[i].isCurrent;
-                this.tiles[currX][currY].isBlank = word[i].isBlank;
-            }
-
-        }
-    }
-
-    /**
-     * Resetuje flagę isCurrent dla wszystkich pól planszy.
-     * Używane po zatwierdzeniu ruchu — litery przestają być "bieżące".
-     */
-    resetCurrents() {
-        for (let i = 0; i < 15; i++) {
-            for (let j = 0; j < 15; j++) {
-                this.tiles[i][j].isCurrent = false;
+        this._placed = 0;
+        for (let x = 0; x < this.size; x++) {
+            for (let y = 0; y < this.size; y++) {
+                if (this.tiles[x][y].letter !== null) this._placed++;
             }
         }
     }
 
     /**
-     * Usuwa z planszy wszystkie litery oznaczone jako bieżące (isCurrent = true).
-     * Przywraca te pola do stanu pustego. Używane do cofania ruchu.
-     */
-    eraseCurrents() {
-        for (let i = 0; i < 15; i++) {
-            for (let j = 0; j < 15; j++) {
-                if (this.tiles[i][j].isCurrent) {
-                    this.tiles[i][j].isCurrent = false;
-                    this.tiles[i][j].letter = null;
-                    this.tiles[i][j].isBlank = false;
-                }
-
-            }
-        }
-    }
-
-    /**
-     * Zwraca aktualny stan planszy (alias dla getTiles).
-     * @returns {Array<Array<{letter: string|null, isBlank: boolean, isCurrent: boolean}>>} Tablica 15x15 pól
+     * Alias dla {@link Board#getTiles} — postać wysyłana do przeglądarki.
+     * @returns {Array<Array<object>>}
      */
     getBoardState() {
         return this.tiles;
     }
 
     /**
-     * Sprawdza, czy plansza jest pusta (nie postawiono jeszcze żadnej litery).
-     * Używane do wykrywania pierwszego ruchu — niezależnie od licznika tur,
-     * który rośnie także przy pasowaniu i nieudanych słowach.
-     * @returns {boolean} true jeśli na planszy nie ma żadnej litery
+     * Czy na planszy nie ma jeszcze żadnej litery (wykrycie pierwszego ruchu).
+     * @returns {boolean}
      */
     isEmpty() {
-        for (let i = 0; i < 15; i++) {
-            for (let j = 0; j < 15; j++) {
-                if (this.tiles[i][j].letter !== null) return false;
-            }
-        }
-        return true;
+        return this._placed === 0;
     }
 
+    /**
+     * Tworzy głęboką kopię planszy.
+     * @returns {Board} Nowa instancja z takim samym stanem pól
+     */
+    cloneBoard() {
+        const copy = new Board(this.variant);
+        for (let x = 0; x < this.size; x++) {
+            for (let y = 0; y < this.size; y++) {
+                copy.tiles[x][y] = { ...this.tiles[x][y] };
+            }
+        }
+        copy._placed = this._placed;
+        return copy;
+    }
+
+    /**
+     * Umieszcza słowo na planszy. Pola już zajęte nie są nadpisywane.
+     * @param {Array<{letter: string, isBlank: boolean, isCurrent: boolean}>} word - Litery słowa
+     * @param {number} x - Kolumna początku słowa
+     * @param {number} y - Wiersz początku słowa
+     * @param {boolean} horizontal - `true` = poziomo, `false` = pionowo
+     *
+     * @example
+     * board.putWord([
+     *   { letter: 'S', isBlank: false, isCurrent: true },
+     *   { letter: 'O', isBlank: false, isCurrent: true },
+     *   { letter: 'L', isBlank: false, isCurrent: true },
+     * ], 5, 7, true);
+     */
+    putWord(word, x, y, horizontal) {
+        for (let i = 0; i < word.length; i++) {
+            const cx = x + (horizontal ? i : 0);
+            const cy = y + (horizontal ? 0 : i);
+            if (cx < 0 || cy < 0 || cx >= this.size || cy >= this.size) continue;
+
+            const cell = this.tiles[cx][cy];
+            if (cell.letter === null) {
+                cell.letter = word[i].letter;
+                cell.isCurrent = !!word[i].isCurrent;
+                cell.isBlank = !!word[i].isBlank;
+                this._placed++;
+            }
+        }
+    }
+
+    /** Zdejmuje oznaczenie „litera z bieżącego ruchu" ze wszystkich pól. */
+    resetCurrents() {
+        for (let x = 0; x < this.size; x++) {
+            for (let y = 0; y < this.size; y++) {
+                this.tiles[x][y].isCurrent = false;
+            }
+        }
+    }
+
+    /** Usuwa z planszy litery oznaczone jako bieżące (cofnięcie ruchu). */
+    eraseCurrents() {
+        for (let x = 0; x < this.size; x++) {
+            for (let y = 0; y < this.size; y++) {
+                const cell = this.tiles[x][y];
+                if (cell.isCurrent) {
+                    cell.isCurrent = false;
+                    cell.letter = null;
+                    cell.isBlank = false;
+                    this._placed--;
+                }
+            }
+        }
+    }
+
+    /**
+     * Wypisuje planszę w konsoli — blanki małymi literami, puste pola kropką.
+     * Przydatne przy testach ręcznych w `server/`.
+     */
+    consolePreviewBoard() {
+        let out = 'Stan planszy:\n';
+        for (let y = 0; y < this.size; y++) {
+            for (let x = 0; x < this.size; x++) {
+                const cell = this.tiles[x][y];
+                if (cell.letter === null) out += '.';
+                else out += cell.isBlank ? cell.letter.toLowerCase() : cell.letter;
+            }
+            out += '\n';
+        }
+        console.log(out);
+    }
 }
 
 module.exports = Board;

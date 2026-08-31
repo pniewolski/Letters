@@ -1,6 +1,6 @@
 # Rozwiązywanie gry ze zdjęcia (AI)
 
-Funkcja pozwala wysłać zdjęcie planszy Scrabble (razem z literkami gracza),
+Funkcja pozwala wysłać zdjęcie planszy z grą słowną (razem z literkami gracza),
 a serwer rozpozna stan gry przez model wizyjny i zwróci do 20 najlepszych ruchów.
 
 ## Jak to działa

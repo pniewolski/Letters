@@ -1,5 +1,16 @@
 const fs = require('fs');
+const path = require('path');
 const readline = require('readline');
+
+/**
+ * Ścieżka pliku słownika — liczona względem tego modułu, a nie katalogu
+ * roboczego. Dzięki temu skrypty pomocnicze nie muszą już robić `process.chdir`.
+ * Można ją nadpisać zmienną środowiskową `DICT_FILE`.
+ * @constant {string}
+ */
+const DICT_FILE = process.env.DICT_FILE
+    ? path.resolve(process.env.DICT_FILE)
+    : path.join(__dirname, '..', 'slownik.txt');
 
 /**
  * @class TrieBuilder
@@ -178,7 +189,7 @@ class WordDictionary {
      */
     async load() {
         const rl = readline.createInterface({
-            input: fs.createReadStream('./slownik.txt'),
+            input: fs.createReadStream(DICT_FILE),
             crlfDelay: Infinity,
         });
 

@@ -1,728 +1,195 @@
 /**
  * @file server.js
- * @description Serwer WebSocket gry Scrabble.
+ * @description Punkt wejścia portalu Literki.
  *
- * Architektura:
- * - Express serwuje pliki statyczne (frontend) z katalogu /public
- * - WebSocket (ws) obsługuje komunikację real-time z klientami
- * - GameManager jest singletonem — jeden słownik dla wszystkich gier
+ * Składa całość do kupy:
+ * - baza danych (SQLite domyślnie, MySQL po zmianie `DB_DRIVER`) + migracje,
+ * - repozytoria i usługa kont,
+ * - słownik (jedna instancja na cały proces — budowa Trie jest kosztowna),
+ * - menedżer stołów,
+ * - Express (statyki + REST) oraz WebSocket na tym samym porcie.
  *
- * Protokół komunikacji (JSON):
- * Klient wysyła:  { type: "nazwaAkcji", ...dane }
- * Serwer odpowiada: { type: "nazwaAkcji:response", ...wynik }
- * Serwer pushuje:  { type: "nazwaZdarzenia", ...dane }
+ * Zmienne środowiskowe:
+ * | zmienna | domyślnie | znaczenie |
+ * |---------|-----------|-----------|
+ * | `PORT`      | 8080     | port HTTP i WebSocket |
+ * | `DATA_DIR`  | `server/data` | katalog na plik bazy (na Northflank podłącz wolumen) |
+ * | `DB_DRIVER` | `sqlite` | `sqlite` albo `mysql` |
+ * | `DB_FILE`   | —        | pełna ścieżka pliku bazy (zamiast `DATA_DIR`) |
+ * | `DB_URL`    | —        | adres MySQL, np. `mysql://user:hasło@host/literki` |
+ * | `DICT_FILE` | `server/slownik.txt` | plik słownika |
  *
  * @example
- * // Uruchomienie: node server/server.js
- * // Klient łączy się: ws://localhost:8080
+ * // uruchomienie lokalne
+ * // npm start   →   http://localhost:8080
  */
 
 const path = require('path');
 const fs = require('fs');
 const http = require('http');
 const express = require('express');
-const multer = require('multer');
 const { WebSocketServer } = require('ws');
-const GameManager = require('./game/GameManager');
-const { solveFromImage, buildBoard, solveTopMoves, normalizeAiData } = require('./ai/imageSolver');
 
-// ─────────────────────────────────────────────────────────────────────────────
-// KONFIGURACJA
-// ─────────────────────────────────────────────────────────────────────────────
+const { createDatabase } = require('./db');
+const { LIMITS } = require('./variant/schema');
+const WordDictionary = require('./board/WordDictionary');
 
-const PORT = process.env.PORT || 8080;
+const UserRepo = require('./repo/UserRepo');
+const SessionRepo = require('./repo/SessionRepo');
+const VariantRepo = require('./repo/VariantRepo');
+const StatsRepo = require('./repo/StatsRepo');
+const GameRepo = require('./repo/GameRepo');
+const FriendRepo = require('./repo/FriendRepo');
+const AuthService = require('./auth/AuthService');
+const TableManager = require('./lobby/TableManager');
+const Hub = require('./ws/Hub');
+const { createRoutes } = require('./app/routes');
+const imageSolver = require('./ai/imageSolver');
 
-// Zmiana katalogu roboczego na /server (bo klasy czytają pliki relatywnie)
-process.chdir(path.join(__dirname));
+const PORT = Number(process.env.PORT) || 8080;
+const PUBLIC_DIR = path.join(__dirname, '..', 'public');
+
+/** Jak często sprzątać wygasłe sesje i porzucone konta gości. */
+const HOUSEKEEPING_MS = 30 * 60 * 1000;
 
 /**
- * Buduje wspólną konfigurację dla frontendu z plików serwera.
- * Łączy: config.json (tytuł, kolory, flagi), layout.json (bonusy) oraz
- * letters.json (punktacja liter — spłaszczona do mapy litera→punkty).
- * Dzięki temu front NIE duplikuje tych danych — pobiera je z /api/config.
- * @returns {object} Konfiguracja: { title, alphabet, flags, boardColors, boardLayout, letterPoints }
+ * Wczytuje konfigurację aplikacji (tytuł, flagi). Reguły gry NIE są tu
+ * trzymane — mieszkają w trybach gry w bazie.
+ * @returns {object}
  */
-function buildClientConfig() {
-    const cfg = JSON.parse(fs.readFileSync(path.join(__dirname, 'config.json'), 'utf-8'));
-    const boardLayout = JSON.parse(fs.readFileSync(path.join(__dirname, 'layout.json'), 'utf-8'));
-    const lettersData = JSON.parse(fs.readFileSync(path.join(__dirname, 'letters.json'), 'utf-8'));
-
-    // Spłaszcz punktację: { "1": ["A",...] } -> { A: 1, ... }
-    const letterPoints = {};
-    for (const [pts, arr] of Object.entries(lettersData.points)) {
-        for (const l of arr) letterPoints[l] = Number(pts);
-    }
-    letterPoints['*'] = 0; // blank = 0 pkt
-
+function loadAppConfig() {
+    const raw = JSON.parse(fs.readFileSync(path.join(__dirname, 'config.json'), 'utf-8'));
     return {
-        title: cfg.title || 'Scrabble',
-        alphabet: cfg.alphabet || '',
-        flags: cfg.flags || {},
-        boardColors: (cfg.board && cfg.board.colors) || {},
-        boardLayout,
-        letterPoints,
+        title: raw.title || 'Literki',
+        tagline: raw.tagline || '',
+        flags: raw.flags || {},
+        limits: {
+            boardSize: LIMITS.size,
+            rackSize: LIMITS.rackSize,
+            tileCount: LIMITS.tileCount,
+            letterCount: LIMITS.letterCount,
+            letterPoints: LIMITS.letterPoints,
+        },
     };
 }
 
-/** @type {object} Konfiguracja klienta (budowana raz przy starcie, współdzielona). */
-const CLIENT_CONFIG = buildClientConfig();
+/**
+ * Buduje wszystkie zależności aplikacji.
+ * @returns {Promise<object>} Kontener zależności
+ */
+async function buildDeps() {
+    const config = loadAppConfig();
+    const db = await createDatabase();
 
-// ─────────────────────────────────────────────────────────────────────────────
-// INICJALIZACJA
-// ─────────────────────────────────────────────────────────────────────────────
+    const users = new UserRepo(db);
+    const sessions = new SessionRepo(db);
+    const variants = new VariantRepo(db);
+    const stats = new StatsRepo(db);
+    const games = new GameRepo(db, stats);
+    const friends = new FriendRepo(db);
+    const auth = new AuthService(users, sessions);
 
-const app = express();
-app.use(express.static(path.join(__dirname, '..', 'public')));
+    const seeded = await variants.seedPresets();
+    if (seeded.length) console.log(`[Tryby] Dodano wbudowane tryby gry: ${seeded.join(', ')}`);
+
+    // Po nieoczekiwanym restarcie nie ma jak dokończyć partii w toku.
+    const orphans = await games.abandonOrphans();
+    if (orphans) console.log(`[Partie] Zamknięto ${orphans} partii przerwanych restartem.`);
+    await db.run("UPDATE game_tables SET status = 'closed' WHERE status IN ('waiting', 'playing')");
+
+    console.log('[Słownik] Ładowanie...');
+    const started = Date.now();
+    const dict = new WordDictionary();
+    await dict.ready;
+    console.log(`[Słownik] Gotowy w ${Date.now() - started} ms.`);
+
+    const tables = new TableManager({ dict, db, variants, games });
+
+    return {
+        config, db, dict,
+        users, sessions, variants, stats, games, friends,
+        auth, tables, imageSolver,
+        hub: null, // uzupełniane po utworzeniu huba
+    };
+}
 
 /**
- * Endpoint konfiguracji — front pobiera stąd tytuł, kolory planszy,
- * układ bonusów i punktację liter (zamiast je duplikować w kodzie).
+ * Uruchamia serwer.
+ * @returns {Promise<void>}
  */
-app.get('/api/config', (req, res) => {
-    res.json(CLIENT_CONFIG);
-});
+async function start() {
+    const deps = await buildDeps();
 
-const httpServer = http.createServer(app);
-const wss = new WebSocketServer({ server: httpServer });
-
-/** @type {GameManager} Singleton menedżera gier */
-const gm = new GameManager();
-
-// ─────────────────────────────────────────────────────────────────────────────
-// API: ROZWIĄZYWANIE GRY ZE ZDJĘCIA
-// ─────────────────────────────────────────────────────────────────────────────
-
-/** Upload obrazu w pamięci (bez zapisu na dysk), limit 15 MB. */
-const upload = multer({
-    storage: multer.memoryStorage(),
-    limits: { fileSize: 15 * 1024 * 1024 },
-});
-
-// Obsługa base64 w body JSON (dla wywołań spoza formularza)
-app.use('/api/solve', express.json({ limit: '20mb' }));
-
-/**
- * Endpoint rozwiązujący grę na podstawie zdjęcia planszy i stojaka.
- *
- * Sposoby wysłania obrazu:
- *  - multipart/form-data z polem plikowym "image"
- *  - application/json z polem "imageBase64" (może zawierać prefiks data:...)
- *
- * Odpowiedź: { success, board, rack, moves: [{ word, orientation, fromLeft, fromTop, points, text }, ...] }
- */
-app.post('/api/solve', upload.single('image'), async (req, res) => {
-    try {
-        // ── Tryb RĘCZNY: klient przesyła stan planszy i litery jako tekst ──
-        if (req.body && req.body.manual) {
-            const limit = Math.min(parseInt(req.body.limit, 10) || 20, 50);
-            const rawBoard = Array.isArray(req.body.board) ? req.body.board : [];
-            const rawRack = Array.isArray(req.body.rack)
-                ? req.body.rack.join('')
-                : String(req.body.rack || '');
-
-            console.log(`[API /api/solve] Tryb ręczny. Litery stojaka: "${rawRack}", limit=${limit}.`);
-
-            const norm = normalizeAiData(
-                { board: rawBoard, rack: rawRack.split('') },
-                CLIENT_CONFIG.alphabet,
-            );
-
-            const board = buildBoard(norm.board);
-
-            if (!norm.rack.length) {
-                return res.json({
-                    success: true,
-                    board: norm.board,
-                    rack: norm.rack,
-                    rackEmpty: true,
-                    warning: 'Nie podano liter na stojaku — wpisz swoje litery, aby policzyć ruchy.',
-                    moves: [],
-                });
-            }
-
-            await gm.dict.ready;
-            const moves = solveTopMoves(board, norm.rack, gm.dict, limit);
-            console.log(`[API /api/solve] Tryb ręczny — ruchów: ${moves.length}.`);
-
-            return res.json({
-                success: true,
-                board: norm.board,
-                rack: norm.rack,
-                rackEmpty: false,
-                moves,
-            });
-        }
-
-        let buffer = null;
-
-        if (req.file && req.file.buffer) {
-            buffer = req.file.buffer;
-        } else if (req.body && req.body.imageBase64) {
-            const b64 = String(req.body.imageBase64).replace(/^data:[^;]+;base64,/, '');
-            buffer = Buffer.from(b64, 'base64');
-        }
-
-        if (!buffer || buffer.length === 0) {
-            return res.status(400).json({ success: false, error: 'Brak obrazu. Wyślij plik w polu "image" lub "imageBase64".' });
-        }
-
-        const limit = Math.min(parseInt(req.query.limit || req.body.limit, 10) || 20, 50);
-
-        console.log(`[API /api/solve] Odebrano zdjęcie (${buffer.length} B), limit=${limit}. Łączę z AI...`);
-
-        await gm.dict.ready; // słownik jest już załadowany, ale na wszelki wypadek
-        const result = await solveFromImage(buffer, gm.dict, {
-            alphabet: CLIENT_CONFIG.alphabet,
-            limit,
-        });
-
-        console.log(`[API /api/solve] Sukces: ruchów=${result.moves.length}, stojak=[${(result.rack || []).join(' ')}]${result.rackEmpty ? ' (pusty stojak)' : ''}.`);
-        res.json(result);
-    } catch (err) {
-        console.error('[API /api/solve] Błąd:', err);
-        res.status(500).json({ success: false, error: err.message || 'Błąd wewnętrzny serwera.' });
-    }
-});
-
-/**
- * Mapa: userId -> WebSocket
- * Pozwala wysyłać wiadomości do konkretnego gracza po jego userId.
- * @type {Map<string, WebSocket>}
- */
-const connections = new Map();
-
-/**
- * Mapa: ws -> userId
- * Odwrotna mapa do szybkiego odszukania userId po sockecie.
- * @type {Map<WebSocket, string>}
- */
-const socketToUser = new Map();
-
-/**
- * Aktywne pętle symulacji komputer vs komputer.
- * @type {Map<string, NodeJS.Timeout>} gameId -> intervalId
- */
-const compLoops = new Map();
-
-/**
- * Mapa widzów gier komputer vs komputer.
- * @type {Map<string, string>} userId(widza) -> gameId
- */
-const spectatorGames = new Map();
-
-/**
- * Gry hostowane i oczekujące na przeciwnika (lobby gry sieciowej).
- * @type {Map<string, {name: string, userId: string}>} gameId -> dane hosta
- */
-const hostedGames = new Map();
-
-/**
- * Rozgłasza aktualną listę oczekujących gier (lobby) do wszystkich klientów.
- * Każdy klient dostaje listę BEZ swojej własnej hostowanej gry, dzięki czemu
- * host nie widzi (i nie może dołączyć do) własnej gry — niezależnie od kolejności
- * wiadomości względem `hostGame:response`.
- */
-function broadcastLobby() {
-    const games = [...hostedGames.entries()].map(([gameId, info]) => ({
-        gameId,
-        name: info.name,
-        userId: info.userId,
+    const app = express();
+    app.disable('x-powered-by');
+    app.use('/api', createRoutes(deps));
+    app.use(express.static(PUBLIC_DIR, {
+        maxAge: '1h',
+        setHeaders(res, filePath) {
+            // Statyki mogą leżeć w cache, ale HTML musi być świeży po deployu.
+            if (filePath.endsWith('.html')) res.setHeader('Cache-Control', 'no-cache');
+        },
     }));
-    for (const client of wss.clients) {
-        if (client.readyState !== client.OPEN) continue;
-        const clientUserId = socketToUser.get(client);
-        const visible = games
-            .filter(g => g.userId !== clientUserId)
-            .map(({ gameId, name }) => ({ gameId, name }));
-        client.send(JSON.stringify({ type: 'lobby', games: visible }));
-    }
-}
 
-// ─────────────────────────────────────────────────────────────────────────────
-// POMOCNICZE
-// ─────────────────────────────────────────────────────────────────────────────
-
-/**
- * Wysyła JSON do konkretnego WebSocket.
- */
-function send(ws, data) {
-    if (ws.readyState === ws.OPEN) {
-        ws.send(JSON.stringify(data));
-    }
-}
-
-/**
- * Wysyła wiadomość do przeciwnika w grze (jeśli jest podłączony).
- * @param {string} userId - userId NADAWCY (wyślemy do jego przeciwnika)
- * @param {object} data - dane do wysłania
- */
-function sendToOpponent(userId, data) {
-    const r = gm._resolve(userId);
-    if (!r) return;
-
-    const opponentPlayer = r.state.players.find(p => p.userId !== userId);
-    if (!opponentPlayer) return;
-
-    const opponentWs = connections.get(opponentPlayer.userId);
-    if (opponentWs) {
-        send(opponentWs, data);
-    }
-}
-
-/**
- * Wysyła zaktualizowany stan gry do obu graczy.
- */
-function broadcastGameState(userId) {
-    const r = gm._resolve(userId);
-    if (!r) return;
-
-    for (const player of r.state.players) {
-        const ws = connections.get(player.userId);
-        if (ws) {
-            const state = gm._buildPublicState(r.state, player.slot);
-            send(ws, { type: 'gameState', state });
-        }
-    }
-}
-
-/**
- * Zatrzymuje pętlę symulacji komputer vs komputer.
- * @param {string} gameId - Identyfikator gry
- */
-function stopCompVsCompLoop(gameId) {
-    const interval = compLoops.get(gameId);
-    if (interval) {
-        clearInterval(interval);
-        compLoops.delete(gameId);
-    }
-}
-
-/**
- * Uruchamia pętlę symulacji komputer vs komputer.
- * Co `stepMs` wykonuje jeden ruch i wysyła stan widzowi, aby oglądał grę na żywo.
- * @param {string} gameId - Identyfikator gry
- * @param {string} spectatorUserId - userId widza
- */
-function startCompVsCompLoop(gameId, spectatorUserId) {
-    const stepMs = CLIENT_CONFIG.flags.compVsCompStepMs || 1400;
-    const MAX_STEPS = 600; // zabezpieczenie przed patologiczną nieskończoną grą
-    let steps = 0;
-
-    const interval = setInterval(() => {
-        const step = gm.stepCompVsComp(gameId);
-        const ws = connections.get(spectatorUserId);
-
-        if (!step.success) { stopCompVsCompLoop(gameId); return; }
-
-        if (ws) {
-            send(ws, { type: 'gameState', state: step.state });
-            if (step.lastMove) send(ws, { type: 'compMove', move: step.lastMove });
-        }
-
-        if (step.finished || ++steps >= MAX_STEPS) {
-            stopCompVsCompLoop(gameId);
-            if (ws) send(ws, { type: 'gameOver', state: step.state });
-        }
-    }, stepMs);
-
-    compLoops.set(gameId, interval);
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// OBSŁUGA ZDARZEŃ WEBSOCKET
-// ─────────────────────────────────────────────────────────────────────────────
-
-/**
- * Handlery akcji klienta.
- * Każdy handler przyjmuje (ws, payload) i opcjonalnie zwraca odpowiedź.
- */
-const handlers = {
-
-    // ═══════════════════════════════════════════════════════════════════════
-    // ZARZĄDZANIE GRAMI
-    // ═══════════════════════════════════════════════════════════════════════
-
-    /**
-     * Tworzy grę z komputerem, z innym graczem lub komputer vs komputer.
-     * Klient: { type: "createGame", mode: "computer"|"human"|"compcomp", difficulty?: number }
-     */
-    async createGame(ws, payload) {
-        const mode = payload.mode || 'computer';
-        let result;
-
-        if (mode === 'computer') {
-            result = await gm.createGameWithComputer(payload.difficulty || 1);
-        } else if (mode === 'compcomp') {
-            result = await gm.createGameWithCompVsComp();
-        } else {
-            result = await gm.createGameWithHuman();
-        }
-
-        if (result.success) {
-            // Powiąż socket z userId
-            connections.set(result.userId, ws);
-            socketToUser.set(ws, result.userId);
-
-            // Tryb obserwacji — uruchom automatyczną symulację
-            if (mode === 'compcomp') {
-                spectatorGames.set(result.userId, result.gameId);
-                startCompVsCompLoop(result.gameId, result.userId);
-            }
-        }
-
-        return { type: 'createGame:response', ...result };
-    },
-
-    /**
-     * Hostuje grę sieciową i publikuje ją w lobby (lista graczy online).
-     * Klient: { type: "hostGame", name: "Ania" }
-     */
-    async hostGame(ws, payload) {
-        const name = (payload.name || '').trim().slice(0, 24) || 'Gracz';
-        const result = await gm.createGameWithHuman(name);
-
-        if (result.success) {
-            connections.set(result.userId, ws);
-            socketToUser.set(ws, result.userId);
-            hostedGames.set(result.gameId, { name, userId: result.userId });
-            broadcastLobby();
-        }
-
-        return { type: 'hostGame:response', ...result };
-    },
-
-    /**
-     * Zwraca aktualną listę gier oczekujących (lobby) tylko do pytającego.
-     * Klient: { type: "listLobby" }
-     */
-    listLobby(ws) {
-        const clientUserId = socketToUser.get(ws);
-        const games = [...hostedGames.entries()]
-            .filter(([, info]) => info.userId !== clientUserId)
-            .map(([gameId, info]) => ({
-                gameId,
-                name: info.name,
-            }));
-        return { type: 'lobby', games };
-    },
-
-    /**
-     * Dołącza do istniejącej gry (human vs human).
-     * Klient: { type: "joinGame", gameId: "...", name: "Ola" }
-     */
-    joinGame(ws, payload) {
-        const name = (payload.name || '').trim().slice(0, 24) || 'Gracz';
-        const result = gm.joinGame(payload.gameId, name);
-
-        if (result.success) {
-            connections.set(result.userId, ws);
-            socketToUser.set(ws, result.userId);
-
-            // Gra przestaje być oczekująca — usuń z lobby i rozgłoś.
-            hostedGames.delete(payload.gameId);
-            broadcastLobby();
-
-            // Powiadom twórcę gry że przeciwnik dołączył
-            const r = gm._resolve(result.userId);
-            if (r) {
-                const creator = r.state.players.find(p => p.slot === 0);
-                if (creator) {
-                    const creatorWs = connections.get(creator.userId);
-                    if (creatorWs) {
-                        const creatorState = gm._buildPublicState(r.state, 0);
-                        send(creatorWs, { type: 'opponentJoined', state: creatorState });
-                    }
-                }
-            }
-        }
-
-        return { type: 'joinGame:response', ...result };
-    },
-
-    /**
-     * Opuszcza grę (rezygnacja).
-     * Klient: { type: "leaveGame" }
-     */
-    leaveGame(ws, payload) {
-        const userId = socketToUser.get(ws);
-        if (!userId) return { type: 'leaveGame:response', success: false, error: 'Brak sesji.' };
-
-        // Powiadom przeciwnika
-        sendToOpponent(userId, { type: 'opponentLeft' });
-
-        const result = gm.leaveGame(userId);
-        connections.delete(userId);
-        socketToUser.delete(ws);
-
-        return { type: 'leaveGame:response', ...result };
-    },
-
-    // ═══════════════════════════════════════════════════════════════════════
-    // ROZGRYWKA
-    // ═══════════════════════════════════════════════════════════════════════
-
-    /**
-     * Wykonuje ruch (kładzie litery).
-     * Klient: { type: "makeMove", tiles: [{letter, x, y, isBlank}, ...] }
-     */
-    makeMove(ws, payload) {
-        const userId = socketToUser.get(ws);
-        if (!userId) return { type: 'makeMove:response', success: false, error: 'Brak sesji.' };
-
-        const result = gm.makeMove(userId, payload.tiles);
-
-        if (result.success) {
-            // Wyślij zaktualizowany stan do obu graczy
-            broadcastGameState(userId);
-
-            // Powiadom przeciwnika o ruchu
-            sendToOpponent(userId, {
-                type: 'opponentMoved',
-                lostTurn: result.lostTurn,
-                points: result.points || 0,
-                wrongWords: result.wrongWords || null,
-            });
-
-            // Jeśli komputer odpowiedział, wyślij info
-            if (result.computerMove) {
-                send(ws, {
-                    type: 'computerMoved',
-                    points: result.computerMove.points,
-                });
-            }
-        }
-
-        return { type: 'makeMove:response', ...result };
-    },
-
-    /**
-     * Wymiana liter.
-     * Klient: { type: "replaceLetters", letters: ["A", "B", ...] }
-     */
-    replaceLetters(ws, payload) {
-        const userId = socketToUser.get(ws);
-        if (!userId) return { type: 'replaceLetters:response', success: false, error: 'Brak sesji.' };
-
-        const result = gm.replaceLetters(userId, payload.letters);
-
-        if (result.success) {
-            broadcastGameState(userId);
-            sendToOpponent(userId, { type: 'opponentReplaced' });
-
-            if (result.computerMove) {
-                send(ws, { type: 'computerMoved', points: result.computerMove.points });
-            }
-        }
-
-        return { type: 'replaceLetters:response', ...result };
-    },
-
-    /**
-     * Pasowanie (pominięcie tury).
-     * Klient: { type: "pass" }
-     */
-    pass(ws, payload) {
-        const userId = socketToUser.get(ws);
-        if (!userId) return { type: 'pass:response', success: false, error: 'Brak sesji.' };
-
-        const result = gm.pass(userId);
-
-        if (result.success) {
-            broadcastGameState(userId);
-            sendToOpponent(userId, { type: 'opponentPassed' });
-
-            if (result.computerMove) {
-                send(ws, { type: 'computerMoved', points: result.computerMove.points });
-            }
-        }
-
-        return { type: 'pass:response', ...result };
-    },
-
-    /**
-     * Pobiera aktualny stan gry.
-     * Klient: { type: "getState" }
-     */
-    getState(ws, payload) {
-        const userId = socketToUser.get(ws);
-        if (!userId) return { type: 'getState:response', success: false, error: 'Brak sesji.' };
-
-        const result = gm.getGameState(userId);
-        return { type: 'getState:response', ...result };
-    },
-
-    // ═══════════════════════════════════════════════════════════════════════
-    // PODPOWIEDZI
-    // ═══════════════════════════════════════════════════════════════════════
-
-    /**
-     * Zwraca najlepsze ruchy jako podpowiedź.
-     * Klient: { type: "hint", count?: number }
-     */
-    hint(ws, payload) {
-        const userId = socketToUser.get(ws);
-        if (!userId) return { type: 'hint:response', success: false, error: 'Brak sesji.' };
-
-        const count = payload.count || 5;
-        const result = gm.getHint(userId, count);
-        return { type: 'hint:response', ...result };
-    },
-
-    // ═══════════════════════════════════════════════════════════════════════
-    // KOMUNIKACJA DODATKOWA (czat + live preview)
-    // ═══════════════════════════════════════════════════════════════════════
-
-    /**
-     * Wysyła wiadomość czatu.
-     * Klient: { type: "chat", message: "..." }
-     */
-    chat(ws, payload) {
-        const userId = socketToUser.get(ws);
-        if (!userId) return { type: 'chat:response', success: false, error: 'Brak sesji.' };
-
-        const message = (payload.message || '').trim();
-        if (!message) return { type: 'chat:response', success: false, error: 'Pusta wiadomość.' };
-        if (message.length > 500) return { type: 'chat:response', success: false, error: 'Wiadomość za długa.' };
-
-        const result = gm.sendChat(userId, message);
-
-        if (result.success) {
-            const r = gm._resolve(userId);
-            const chatEntry = {
-                type: 'chatMessage',
-                slot: r.slot,
-                message,
-                timestamp: Date.now(),
-            };
-
-            // Wyślij do obu graczy (nadawca też widzi potwierdzenie)
-            send(ws, chatEntry);
-            sendToOpponent(userId, chatEntry);
-        }
-
-        return { type: 'chat:response', ...result };
-    },
-
-    /**
-     * Podgląd na żywo — klient wysyła bieżące ułożenie liter PRZED zatwierdzeniem ruchu.
-     * Przeciwnik widzi w real-time co drugi gracz układa na planszy.
-     *
-     * Klient: { type: "livePreview", tiles: [{letter, x, y, isBlank}, ...] }
-     *   - tiles = [] oznacza wyczyszczenie podglądu (gracz zabrał litery z planszy)
-     */
-    livePreview(ws, payload) {
-        const userId = socketToUser.get(ws);
-        if (!userId) return;
-
-        // Przesyłamy do przeciwnika tylko pozycje i czy to blank
-        // (litery NIE są ujawniane — przeciwnik widzi tylko "klocki" na pozycjach)
-        const preview = (payload.tiles || []).map(t => ({
-            x: t.x,
-            y: t.y,
-            hasLetter: true,  // nie ujawniamy samej litery
-            isBlank: t.isBlank || false,
-        }));
-
-        sendToOpponent(userId, {
-            type: 'livePreview',
-            tiles: preview,
-        });
-
-        // Brak response — fire and forget
-        return null;
-    },
-};
-
-// ─────────────────────────────────────────────────────────────────────────────
-// GŁÓWNA PĘTLA WEBSOCKET
-// ─────────────────────────────────────────────────────────────────────────────
-
-wss.on('connection', (ws) => {
-    console.log(`[WS] Nowe połączenie (aktywne: ${wss.clients.size})`);
-
-    ws.on('message', async (raw) => {
-        let msg;
+    // Prosty status dla monitoringu hostingu.
+    app.get('/healthz', (req, res) => res.json({
+        ok: true,
+        tables: deps.tables.tables.size,
+        online: deps.hub ? deps.hub.onlineCount() : 0,
+        uptime: Math.round(process.uptime()),
+    }));
+
+    // Portal jest aplikacją jednostronicową — nieznane ścieżki serwują index.html.
+    app.use((req, res, next) => {
+        if (req.method !== 'GET' || req.path.startsWith('/api/')) return next();
+        res.set('Cache-Control', 'no-cache');
+        res.sendFile(path.join(PUBLIC_DIR, 'index.html'));
+    });
+
+    const httpServer = http.createServer(app);
+    const wss = new WebSocketServer({ server: httpServer, maxPayload: 256 * 1024 });
+
+    const hub = new Hub({ wss, deps });
+    deps.hub = hub;
+    hub.start();
+
+    // ── Sprzątanie w tle ────────────────────────────────────────────────────
+    const housekeeping = setInterval(async () => {
         try {
-            msg = JSON.parse(raw.toString());
-        } catch (e) {
-            send(ws, { type: 'error', error: 'Niepoprawny format JSON.' });
-            return;
-        }
-
-        const { type, ...payload } = msg;
-
-        if (!type || !handlers[type]) {
-            send(ws, { type: 'error', error: `Nieznana akcja: ${type}` });
-            return;
-        }
-
-        try {
-            const response = await handlers[type](ws, payload);
-            if (response) {
-                send(ws, response);
+            const expired = await deps.sessions.purgeExpired();
+            const guests = await deps.users.purgeStaleGuests();
+            if (expired || guests) {
+                console.log(`[Porządki] Sesje: ${expired}, konta gości: ${guests}.`);
             }
         } catch (err) {
-            console.error(`[WS] Błąd w handlerze "${type}":`, err);
-            send(ws, { type: `${type}:response`, success: false, error: 'Błąd wewnętrzny serwera.' });
+            console.error('[Porządki] Błąd:', err.message);
         }
-    });
-
-    ws.on('close', () => {
-        const userId = socketToUser.get(ws);
-        if (userId) {
-            console.log(`[WS] Rozłączono: ${userId}`);
-
-            // Jeśli to widz gry komputer vs komputer — zatrzymaj symulację
-            const spectatedGameId = spectatorGames.get(userId);
-            if (spectatedGameId) {
-                stopCompVsCompLoop(spectatedGameId);
-                spectatorGames.delete(userId);
-            }
-
-            // Jeśli host opuścił oczekującą grę — usuń ją z lobby i rozgłoś.
-            let lobbyChanged = false;
-            for (const [gameId, info] of hostedGames.entries()) {
-                if (info.userId === userId) {
-                    hostedGames.delete(gameId);
-                    lobbyChanged = true;
-                }
-            }
-            if (lobbyChanged) broadcastLobby();
-
-            // Powiadom przeciwnika o rozłączeniu
-            sendToOpponent(userId, { type: 'opponentDisconnected' });
-
-            connections.delete(userId);
-            socketToUser.delete(ws);
-        }
-    });
-
-    ws.on('error', (err) => {
-        console.error('[WS] Błąd socketu:', err.message);
-    });
-
-    // Powitanie — serwer potwierdza połączenie
-    send(ws, { type: 'connected', message: 'Połączono z serwerem Scrabble.' });
-});
-
-// ─────────────────────────────────────────────────────────────────────────────
-// START SERWERA
-// ─────────────────────────────────────────────────────────────────────────────
-
-async function start() {
-    console.log('[Server] Ładowanie słownika...');
-    await gm.dict.ready;
-    console.log('[Server] Słownik gotowy.');
-    console.log(process.memoryUsage());
+    }, HOUSEKEEPING_MS);
+    housekeeping.unref?.();
 
     httpServer.listen(PORT, () => {
-        console.log(`[Server] Scrabble server nasłuchuje na http://localhost:${PORT}`);
-        console.log(`[Server] WebSocket dostępny na ws://localhost:${PORT}`);
+        console.log(`[Serwer] ${deps.config.title} działa na http://localhost:${PORT}`);
+        console.log(`[Serwer] WebSocket na tym samym porcie (ws://localhost:${PORT}).`);
     });
+
+    // ── Zamykanie ───────────────────────────────────────────────────────────
+    const shutdown = async (signal) => {
+        console.log(`[Serwer] Otrzymano ${signal} — zamykam...`);
+        clearInterval(housekeeping);
+        hub.stop();
+        deps.tables.shutdown();
+        for (const client of wss.clients) client.close(1001, 'Serwer się wyłącza.');
+        httpServer.close(() => {
+            deps.db.close().finally(() => process.exit(0));
+        });
+        setTimeout(() => process.exit(0), 5000).unref();
+    };
+
+    process.on('SIGTERM', () => shutdown('SIGTERM'));
+    process.on('SIGINT', () => shutdown('SIGINT'));
 }
 
 start().catch(err => {
-    console.error('[Server] Nie udało się uruchomić serwera:', err);
+    console.error('[Serwer] Nie udało się wystartować:', err);
     process.exit(1);
 });
-

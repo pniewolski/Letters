@@ -1,22 +1,10 @@
 {
-  "title": "Literkowa Gra",
-  "alphabet": "AĄBCĆDEĘFGHIJKLŁMNŃOÓPRSŚTUWYZŹŻ",
+  "title": "Literki",
+  "tagline": "Portal dla miłośników gier słownych",
   "flags": {
     "allowHintsVsHuman": false,
-    "compVsCompStepMs": 1400
-  },
-  "board": {
-    "colors": {
-      "normal": "#2a4a3a",
-      "center": "#3a3326",
-      "wordX2": "#5b2a2a",
-      "wordX3": "#7a2b22",
-      "letterX2": "#22405c",
-      "letterX3": "#163a52",
-      "tile": "#d4a94a",
-      "tileCurrent": "#f5d76e",
-      "tileText": "#1a1a2e"
-    }
+    "allowGuestTables": true,
+    "allowRegistration": true,
+    "allowImageSolver": true
   }
 }
-

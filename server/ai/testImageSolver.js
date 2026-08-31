@@ -1,34 +1,48 @@
 /**
- * Szybki test offline: buildBoard + solveTopMoves (bez wywołania modelu AI).
- * Uruchom: node server/ai/testImageSolver.js
+ * @file testImageSolver.js
+ * @description Szybki test offline solvera ze zdjęcia: `buildBoard`
+ * + `solveTopMoves`, bez wywoływania modelu AI (i bez kosztów).
+ *
+ * ```powershell
+ * node server/ai/testImageSolver.js
+ * ```
  */
-process.chdir(require('path').join(__dirname, '..'));
 
 const WordDictionary = require('../board/WordDictionary');
 const { buildBoard, solveTopMoves, normalizeAiData } = require('./imageSolver');
+const { compileVariant } = require('../variant/compile');
+const { LITERKI } = require('../variant/presets');
 
+/** Uruchamia test. */
 async function main() {
+    const variant = compileVariant(LITERKI.definition, { slug: 'literki', name: 'Literki' });
+
     const dict = new WordDictionary();
     await dict.ready;
 
-    // Symulacja odpowiedzi modelu: puste pola '.', "KOT" poziomo w środku (wiersz 7)
-    const rawRows = [];
-    for (let i = 0; i < 15; i++) rawRows.push('.'.repeat(15));
-    // wstaw KOT na wierszu 7 (y=7), kolumny 6,7,8
-    let row7 = rawRows[7].split('');
-    row7[6] = 'K'; row7[7] = 'O'; row7[8] = 'T';
-    rawRows[7] = row7.join('');
+    // Udawana odpowiedź modelu: puste pola i słowo KOT w środku planszy.
+    const rows = Array.from({ length: variant.size }, () => '.'.repeat(variant.size));
+    const middle = [...rows[7]];
+    middle[6] = 'K';
+    middle[7] = 'O';
+    middle[8] = 'T';
+    rows[7] = middle.join('');
 
-    const aiData = { board: rawRows, rack: ['A', 'L', 'E', 'S', 'R', 'I', '*'] };
-    const norm = normalizeAiData(aiData, 'AĄBCĆDEĘFGHIJKLŁMNŃOÓPRSŚTUWYZŹŻ');
+    const norm = normalizeAiData(
+        { board: rows, rack: ['A', 'L', 'E', 'S', 'R', 'I', '*'] },
+        variant.alphabet,
+    );
 
-    const board = buildBoard(norm.board);
+    const board = buildBoard(norm.board, variant);
     board.consolePreviewBoard();
 
     const moves = solveTopMoves(board, norm.rack, dict, 20);
-    console.log(`\nZnaleziono ${moves.length} ruchów:\n`);
-    for (const m of moves) console.log('  ' + m.text);
+    console.log(`\nStojak: ${norm.rack.join(' ')}`);
+    console.log(`Znaleziono ${moves.length} ruchów (tryb ${variant.meta.name}):\n`);
+    for (const move of moves) console.log('  ' + move.text);
 }
 
-main().catch(e => { console.error(e); process.exit(1); });
-
+main().catch(err => {
+    console.error('Błąd:', err);
+    process.exit(1);
+});

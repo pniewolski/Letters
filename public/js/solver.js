@@ -15,7 +15,7 @@
     const resultCard = document.getElementById('result-card');
     const movesEl = document.getElementById('moves');
     const rackEl = document.getElementById('rack');
-    const miniBoardEl = document.getElementById('mini-board');
+    const miniBoardEl = document.getElementById('solver-board');
     const warnEl = document.getElementById('warn');
 
     const MAX_DIM = 1200;
@@ -151,7 +151,7 @@
             for (let x = 0; x < size; x++) {
                 const ch = row[x] || '.';
                 const cell = document.createElement('div');
-                cell.className = 'mini-cell';
+                cell.className = 'solver-cell';
                 if (x === center && y === center) cell.classList.add('center');
                 if (ch !== '.' && ch !== ' ') {
                     // mała litera = blank

@@ -1,105 +1,101 @@
-const fs = require('fs');
-
 /**
  * @class DrawstringBag
- * @description Reprezentuje worek (sakiewkę) z literami w grze Scrabble.
- * Przechowuje pulę dostępnych liter zgodnie z konfiguracją z pliku letters.json.
- * Umożliwia losowanie, wymianę i pobieranie konkretnych liter.
+ * @description Worek z klockami. Zawartość wynika z trybu gry — ilości liter
+ * i liczba blanków pochodzą z `CompiledVariant`, nie z pliku na dysku.
  *
  * @example
- * const DrawstringBag = require('./DrawstringBag');
- * const bag = new DrawstringBag();
- * const letters = bag.draw(7); // losuje 7 liter
- * console.log(bag.getBagSize()); // ile liter zostało w worku
+ * const bag = new DrawstringBag(variant);
+ * const rack = bag.draw(7);       // losuje 7 klocków
+ * bag.getBagSize();               // ile zostało
  */
 class DrawstringBag {
-
     /**
-     * Tworzy nowy worek wypełniony literami zgodnie z konfiguracją z letters.json.
-     * Każda litera występuje w ilości określonej w sekcji "quantities" pliku JSON.
+     * @param {import('../variant/compile').CompiledVariant} variant - Skompilowany tryb gry
+     * @throws {Error} Gdy nie podano trybu gry
      */
-    constructor() {
-        this.lettersBag = [];
-        this.loadQuantities();
-    }
-    /**
-     * Ładuje ilości liter z pliku letters.json i wypełnia worek.
-     * @private
-     */
-    loadQuantities() {
-        const pointsJson = fs.readFileSync('letters.json', 'utf-8');
-        const quantities = JSON.parse(pointsJson).quantities;
-
-        for (const [quantity, letters] of Object.entries(quantities)) {
-            letters.forEach(l => {
-                for (let i = 0; i < Number(quantity); i++) {
-                    this.lettersBag.push(l);
-                }
-            });
-
-        }
+    constructor(variant) {
+        if (!variant) throw new Error('DrawstringBag wymaga trybu gry (CompiledVariant).');
+        this.variant = variant;
+        this.lettersBag = variant.bagComposition();
     }
 
     /**
-     * Losuje podaną liczbę liter z worka (bez zwracania).
-     * @param {number} number - Liczba liter do wylosowania
-     * @returns {string[]} Tablica wylosowanych liter
-     * @throws {Error} Jeśli worek jest pusty ("Próba losowania z pustego worka!")
+     * Losuje klocki z worka (bez zwracania). Gdy w worku jest mniej klocków
+     * niż zamówiono, zwraca tyle, ile zostało — zamiast rzucać wyjątkiem,
+     * bo to normalna sytuacja w końcówce partii.
+     * @param {number} number - Ile klocków wylosować
+     * @returns {string[]} Wylosowane klocki
      *
      * @example
-     * const drawn = bag.draw(3); // => ['A', 'K', 'Ż']
+     * bag.draw(3); // => ['A', 'K', 'Ż']
      */
     draw(number) {
-        let result = [];
-        for (let i = 0; i < number; i++) {
-            if (this.lettersBag.length > 0) {
-                const randomIndex = Math.floor(Math.random() * this.lettersBag.length); // Losowy indeks
-                const letter = this.lettersBag.splice(randomIndex, 1)[0]; // Usuwamy i przechowujemy element
-                result.push(letter);
-            } else {
-                throw new Error("Próba losowania z pustego worka!");
-            }
-
+        const result = [];
+        const wanted = Math.max(0, Math.min(number, this.lettersBag.length));
+        for (let i = 0; i < wanted; i++) {
+            const idx = Math.floor(Math.random() * this.lettersBag.length);
+            result.push(this.lettersBag.splice(idx, 1)[0]);
         }
         return result;
     }
 
     /**
-     * Wymienia litery — losuje nowe i zwraca stare do worka.
-     * Najpierw losuje nowe litery, potem wkłada oddawane litery z powrotem.
-     * @param {string[]} letters - Tablica liter do oddania
-     * @returns {string[]} Tablica nowo wylosowanych liter (tej samej długości)
+     * Wymienia klocki: najpierw losuje nowe, dopiero potem wrzuca stare
+     * do worka (żeby gracz nie mógł dostać z powrotem tych samych).
+     * @param {string[]} letters - Klocki oddawane do worka
+     * @returns {string[]} Nowe klocki (tyle, ile udało się wylosować)
      *
      * @example
-     * const newLetters = bag.replace(['X', 'Ź']); // oddaje X i Ź, dostaje 2 nowe
+     * bag.replace(['X', 'Ź']); // oddaje dwa klocki, dostaje dwa nowe
      */
     replace(letters) {
-        let result = this.draw(letters.length);
-        letters.forEach(letter => this.lettersBag.push(letter));
+        const result = this.draw(letters.length);
+        this.lettersBag.push(...letters);
         return result;
     }
 
     /**
-     * Pobiera konkretną literę z worka (jeśli istnieje).
-     * @param {string} letter - Litera do pobrania
-     * @returns {string} Pobrana litera
-     * @throws {Error} Jeśli litery nie ma w worku ("Brak szukanej litery w worku")
+     * Wyjmuje z worka konkretny klocek (używane przy odtwarzaniu stanu partii).
+     * @param {string} letter - Szukany klocek
+     * @returns {string} Wyjęty klocek
+     * @throws {Error} Gdy takiego klocka nie ma w worku
      */
     getSpecificLetter(letter) {
-        const index = this.lettersBag.findIndex(l => l === letter);
-        if (index == -1) {
-            throw new Error("Brak szukanej litery w worku");
-        }
-        const result = this.lettersBag.splice(index, 1)[0]; // Usuwamy i przechowujemy element
-        return result;
+        const index = this.lettersBag.indexOf(letter);
+        if (index === -1) throw new Error(`Brak klocka "${letter}" w worku.`);
+        return this.lettersBag.splice(index, 1)[0];
     }
 
     /**
-     * Zwraca liczbę liter pozostałych w worku.
-     * @returns {number} Liczba liter w worku
+     * Wrzuca klocki z powrotem do worka.
+     * @param {string[]} letters - Klocki do zwrotu
+     */
+    putBack(letters) {
+        this.lettersBag.push(...letters);
+    }
+
+    /**
+     * Liczba klocków pozostałych w worku.
+     * @returns {number}
      */
     getBagSize() {
         return this.lettersBag.length;
+    }
+
+    /**
+     * Zwraca kopię zawartości worka — do zapisu stanu partii.
+     * @returns {string[]}
+     */
+    snapshot() {
+        return [...this.lettersBag];
+    }
+
+    /**
+     * Ustawia zawartość worka (odtworzenie zapisanej partii).
+     * @param {string[]} letters
+     */
+    restore(letters) {
+        this.lettersBag = [...letters];
     }
 }
 
