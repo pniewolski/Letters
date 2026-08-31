@@ -261,10 +261,20 @@ function createRoutes(deps) {
         res.json({ success: true });
     }));
 
-    /** Podgląd definicji bez zapisu — edytor sprawdza tu poprawność na żywo. */
+    /**
+     * Podgląd definicji bez zapisu — edytor sprawdza tu poprawność na żywo.
+     * Oprócz walidacji zwraca listę liter, których nie ma w słowniku: taki
+     * klocek da się położyć na stojaku, ale nigdy nie wejdzie w żadne słowo.
+     */
     router.post('/variants/preview', wrap(async (req, res) => {
         const definition = normalizeDefinition((req.body || {}).definition);
-        res.json({ success: true, definition, summary: summarize(definition) });
+
+        await deps.dict.ready;
+        const unknownLetters = definition.tiles
+            .filter(tile => deps.dict.frequencyOf(tile.letter) === 0)
+            .map(tile => tile.letter);
+
+        res.json({ success: true, definition, summary: summarize(definition), unknownLetters });
     }));
 
     // ─────────────────────────────────────────────────────────────────────────

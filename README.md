@@ -179,6 +179,26 @@ właściwy dialekt. Migracje wykonują się przy starcie i zapisują w tabeli
 
 ---
 
+## Połączenie i telefony
+
+WebSocket na telefonie bywa zdradliwy: po zminimalizowaniu przeglądarki system
+zrywa gniazdo po cichu, a strona po powrocie widzi `readyState === OPEN` i nigdy
+nie dostaje zdarzenia `close`. Połączenie wygląda na sprawne i nie wraca.
+
+Dlatego `public/js/net.js` nie ufa samemu `readyState`:
+
+- mierzy czas od ostatniej wiadomości serwera — po 15 s ciszy pyta `ping`,
+  po 35 s uznaje gniazdo za martwe i zestawia nowe,
+- powrót do karty (`visibilitychange`, `pageshow`, `focus`) i zmiana sieci
+  (`online`) natychmiast weryfikują łącze i zerują odczekiwanie,
+- stare gniazdo jest odpinane przed zestawieniem nowego, żeby jego spóźniony
+  `close` nie wywołał wyścigu dwóch połączeń.
+
+Po stronie serwera `TableManager` daje graczowi **90 sekund na powrót**, zanim
+zwolni jego miejsce przy stole, który jeszcze nie wystartował. W trakcie partii
+miejsce zostaje na stałe, ale gracz nieobecny dłużej niż 150 sekund dostaje
+automatyczny pas — inaczej jedna zerwana sesja blokowałaby stół w nieskończoność.
+
 ## Konta i goście
 
 - **Gość** dostaje konto techniczne i sesję zapisaną w `sessionStorage` —
@@ -191,6 +211,59 @@ właściwy dialekt. Migracje wykonują się przy starcie i zapisują w tabeli
 - Nieaktywne konta gości znikają po 14 dniach (sprzątaczka w tle).
 
 ---
+
+## Komputerowy przeciwnik
+
+Trzy poziomy trudności — różnią się nie tempem, tylko tym, co komputer bierze
+pod uwagę:
+
+| poziom | nazwa | co robi |
+|--------|-------|---------|
+| 1 | Łatwy | celowo sięga po słabsze zagrania z listy |
+| 2 | Średni | gra po prostu najwięcej punktów — tak, jak liczy większość ludzi |
+| 3 | Trudny | patrzy też na to, **co zostaje na stojaku** (blank, balans samogłosek, duplikaty), a przy kończącym się worku gra na wyjście z liter, bo to ono rozstrzyga końcówkę |
+
+Nic tu nie zna wartości konkretnych liter „z pamięci" — wszystko skaluje się
+wartościami z trybu gry, więc AI gra sensownie także na planszach ułożonych
+przez graczy.
+
+### Skąd wiadomo, że wyższy poziom jest lepszy
+
+Z pomiaru, nie z przekonania. `npm run ai:duel` sadza dwa poziomy naprzeciw
+siebie i podaje wynik z marginesem błędu:
+
+```powershell
+node server/tools/aiDuel.js --a 3 --b 2 --games 60
+node server/tools/aiDuel.js --a 2 --b 1 --games 40 --variant scr
+```
+
+Gra słowna jest bardzo losowa, więc przy strojeniu warto rozgrywać **pary**
+partii na tym samym losowaniu worka z zamienionymi stronami — inaczej różnica
+umiejętności ginie w szczęściu przy dobieraniu liter. Tak zmierzona drabinka
+(800 partii na porównanie):
+
+| porównanie | Literki | SCR |
+|------------|---------|-----|
+| Trudny kontra Średni | +32,7 ±11,9 pkt | +18,1 ±11,6 pkt |
+| Średni kontra Łatwy | +804,9 ±12,9 pkt | +723,2 ±12,1 pkt |
+
+### Czego w AI nie ma i dlaczego
+
+Kilka rozsądnie brzmiących pomysłów przeszło pomiar i **odpadło** — warto
+o tym wiedzieć, zanim ktoś zechce je wprowadzić po raz drugi:
+
+- **wycena pojedynczych liter** (przez częstość w słowniku, przez punktację,
+  przez „użyteczność" z trybu gry) — od −29 pkt do zera,
+- **kara za otwieranie przeciwnikowi pól premiowych** — +0,7 ±8,9 pkt na 1000 partii,
+- **zamykanie planszy przy prowadzeniu** — −0,7 ±6,3 pkt na 1000 partii,
+- **symulacja odpowiedzi przeciwnika** (jeden ruch w przód, losowanie jego
+  stojaka z liter niewidzianych) — bez efektu przy 15-krotnie droższym ruchu.
+  Przy jednym ruchu w przód najlepsza odpowiedź przeciwnika zależy głównie od
+  jego liter, a nie od tego, które z naszych zagrań wybierzemy. Zrobienie tego
+  porządnie (dwa ruchy w przód, setki losowań) kosztowałoby sekundy na ruch —
+  za dużo przy wielu stołach naraz.
+
+Zostało to, co wygrywa partie: ocena reszty stojaka i gra pod końcówkę.
 
 ## Protokół
 

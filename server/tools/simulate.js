@@ -55,6 +55,7 @@ async function main() {
 
     const scores = [];
     const wordScores = [];
+    const kinds = { word: 0, exchange: 0, pass: 0, invalid: 0, resign: 0 };
     let bingos = 0;
     let bestWord = { word: null, points: 0 };
     const started = Date.now();
@@ -68,6 +69,7 @@ async function main() {
         }
 
         for (const move of game.moves) {
+            kinds[move.type] = (kinds[move.type] || 0) + 1;
             if (move.type !== 'word') continue;
             wordScores.push(move.points);
             if (move.bingo) bingos++;
@@ -91,6 +93,8 @@ async function main() {
     console.log(`Najwyższy wynik: ${Math.max(...scores)} pkt`);
     console.log(`Zagranych słów: ${wordScores.length}, średnio ${avg(wordScores).toFixed(1)} pkt za słowo`);
     console.log(`Premii za wyłożenie stojaka: ${bingos}`);
+    console.log(`Rodzaje ruchów: słowo ${kinds.word}, wymiana ${kinds.exchange}, `
+        + `pas ${kinds.pass}, złe słowo ${kinds.invalid}`);
     console.log(`Najlepsze słowo: ${bestWord.word || '—'} (${bestWord.points} pkt)`);
 }
 

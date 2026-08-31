@@ -141,9 +141,32 @@ class WordDictionary {
      */
     constructor() {
         this.tries = new Map();     // length -> { firstEdge, edgeLetter, edgeTarget, isWord }
+        /**
+         * Udział litery wśród wszystkich znaków słownika (0–1). Wypełniany
+         * podczas ładowania; strategia AI ocenia dzięki temu, jak łatwo
+         * daną literą się zagra.
+         * @type {Object<string, number>}
+         */
+        this.letterShare = Object.create(null);
         this.letterId = new Map();  // znak -> id (0..A-1)
         this.idToChar = [];         // id -> znak
         this.ready = this.load();
+    }
+
+    /**
+     * Jak często litera występuje w słowniku (udział wśród wszystkich znaków).
+     * Strategia AI używa tego jako miary „grywalności" litery — częsta litera
+     * łatwiej wejdzie w słowo, więc warto ją zatrzymać na stojaku.
+     * @param {string} letter - Litera (wielkość liter bez znaczenia)
+     * @returns {number} Udział 0–1; 0 dla liter spoza słownika
+     *
+     * @example
+     * dict.frequencyOf('A'); // => 0.094
+     * dict.frequencyOf('Ź'); // => 0.0007
+     */
+    frequencyOf(letter) {
+        if (!letter) return 0;
+        return this.letterShare[letter.toUpperCase()] || 0;
     }
 
     /**
@@ -194,6 +217,8 @@ class WordDictionary {
         });
 
         const builders = new Map(); // length -> TrieBuilder
+        const counts = Object.create(null);
+        let totalChars = 0;
 
         for await (const line of rl) {
             const word = line.trim().toUpperCase();
@@ -206,8 +231,17 @@ class WordDictionary {
             let node = 0;
             for (const ch of word) {
                 node = b.childOrCreate(node, this._internLetter(ch));
+                // Częstość liter zbieramy przy okazji — i tak przechodzimy
+                // przez każdy znak, a strategia AI potrzebuje jej do oceny,
+                // które litery warto zatrzymać na stojaku.
+                counts[ch] = (counts[ch] || 0) + 1;
+                totalChars++;
             }
             b.setWord(node);
+        }
+
+        for (const [ch, count] of Object.entries(counts)) {
+            this.letterShare[ch] = count / totalChars;
         }
 
         for (const [len, b] of builders) {

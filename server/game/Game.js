@@ -184,9 +184,9 @@ class Game {
             return this._computerExchangeOrPass(player);
         }
 
-        const move = this.strategy.getBestMove(
-            moves, this.table.board, stack, this.table.bag.getBagSize(),
-        );
+        const move = this.strategy.getBestMove(moves, this.table.board, stack, {
+            bagSize: this.table.bag.getBagSize(),
+        });
 
         if (!move) return this._computerExchangeOrPass(player);
 
@@ -217,8 +217,10 @@ class Game {
      */
     _computerExchangeOrPass(player, preferred) {
         const bagSize = this.table.bag.getBagSize();
-        const letters = (preferred && preferred.length ? preferred : this.strategy.pickTilesToExchange(this.table.stack[player]))
-            .slice(0, bagSize);
+        const letters = (preferred && preferred.length
+            ? preferred
+            : this.strategy.pickTilesToExchange(this.table.stack[player], bagSize)
+        ).slice(0, bagSize);
 
         if (letters.length > 0 && bagSize >= this.variant.rules.exchangeMinBag) {
             this.table.replaceLetters(player, letters);

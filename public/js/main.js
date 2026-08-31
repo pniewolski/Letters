@@ -303,15 +303,33 @@ async function boot() {
     startRouter(document.getElementById('view'), '/');
     setState({ booting: false });
 
-    // Utrata i powrót łączności — dopytujemy serwer o świeży stan.
-    window.addEventListener('online', () => connect());
+    // O samo połączenie dba net.js (czuwak, powrót do karty, zmiana sieci).
+    // Tutaj zostaje reakcja na jego stan: informacja dla gracza i dociągnięcie
+    // świeżego stanu po powrocie.
+    let wasOffline = false;
+
+    subscribe('connection', () => {
+        if (store.connection === 'off') {
+            wasOffline = true;
+            return;
+        }
+        if (store.connection === 'on' && wasOffline) {
+            wasOffline = false;
+            toast('Połączenie odzyskane.', 'ok', 2500);
+        }
+    });
+
+    // Powrót do karty na telefonie: dajemy chwilę na odtworzenie łącza,
+    // potem prosimy o świeży stan lobby i stołu.
     document.addEventListener('visibilitychange', () => {
-        if (document.visibilityState === 'visible' && store.connection === 'on') {
+        if (document.visibilityState !== 'visible') return;
+        setTimeout(() => {
+            if (store.connection !== 'on') return;
             call('sync').then(res => {
                 if (!res.success) return;
                 setState({ table: res.table, game: res.game, tables: res.tables, online: res.online });
             }).catch(() => {});
-        }
+        }, 1200);
     });
 }
 

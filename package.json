@@ -10,7 +10,8 @@
     "tiles:derive": "node server/tools/deriveTiles.js",
     "sim": "node server/tools/simulate.js",
     "play": "node server/tools/playConsole.js",
-    "bench": "node server/board/dictBench.js"
+    "ai:duel": "node server/tools/aiDuel.js",
+    "sandbox": "node server/tools/sandbox.js"
   },
   "engines": {
     "node": ">=22.5"

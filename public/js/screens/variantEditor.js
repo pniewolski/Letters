@@ -388,10 +388,10 @@ export default async function variantEditorScreen(host, params = {}) {
         try {
             const res = await api.post('/variants/preview', { definition: model.definition });
             errorEl.textContent = '';
-            renderSummary(res.summary, true);
+            renderSummary(res.summary, true, res.unknownLetters || []);
         } catch (err) {
             errorEl.textContent = err.message;
-            renderSummary(null, false);
+            renderSummary(null, false, []);
         }
     }
 
@@ -399,8 +399,9 @@ export default async function variantEditorScreen(host, params = {}) {
      * Panel z liczbami trybu.
      * @param {object|null} summary
      * @param {boolean} valid
+     * @param {string[]} [unknownLetters] - Litery, których nie ma w słowniku
      */
-    function renderSummary(summary, valid) {
+    function renderSummary(summary, valid, unknownLetters = []) {
         const localTiles = model.definition.tiles.reduce((s, t) => s + t.count, 0) + model.definition.blank.count;
 
         fill(summaryEl,
@@ -419,6 +420,14 @@ export default async function variantEditorScreen(host, params = {}) {
             summary
                 ? el('p', { class: 'muted tiny' },
                     `Średnia wartość klocka: ${(summary.pointSum / Math.max(1, summary.letters)).toFixed(2)} pkt.`)
+                : null,
+
+            // Litera spoza słownika zablokuje stojak na resztę partii —
+            // lepiej powiedzieć o tym od razu niż po pierwszej rozgrywce.
+            unknownLetters.length
+                ? el('p', { class: 'notice' },
+                    `Tych liter nie ma w słowniku: ${unknownLetters.join(' ')}. `
+                    + 'Klocki z nimi da się wylosować, ale nie wejdą w żadne słowo.')
                 : null,
         );
     }

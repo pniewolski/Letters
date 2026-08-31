@@ -21,7 +21,7 @@ Dockera używa `node:24-slim`.
 Weryfikacja odbywa się ręcznie: przez skrypty w `server/tools/` albo przez
 uruchomienie serwera.
 
-## Trzy rzeczy, które łatwo zepsuć
+## Cztery rzeczy, które łatwo zepsuć
 
 1. **Reguły gry nie należą do kodu.** Rozmiar planszy, punktacja, ilości liter,
    premie i kolory pochodzą z `CompiledVariant` (`server/variant/`). Jeśli
@@ -36,6 +36,14 @@ uruchomienie serwera.
    `game`, `move`, `over`, `chat`), a `ws/Hub.js` zamienia je na komunikaty.
    Nie wywołuj `ws.send` z warstwy lobby — inaczej logiki nie da się
    przetestować bez serwera.
+
+4. **WebSocket nie umie sam powiedzieć, że umarł.** Po uśpieniu telefonu
+   gniazdo potrafi mieć `readyState === OPEN`, choć nic już nie przenosi,
+   a zdarzenie `close` nigdy nie przychodzi — połączenie wygląda na sprawne
+   i nie wraca już nigdy. Dlatego `public/js/net.js` mierzy czas od ostatniej
+   wiadomości serwera i sam odtwarza łącze; samo sprawdzanie `readyState` to
+   za mało. Po stronie serwera `TableManager` daje graczowi karencję na
+   powrót, zanim zwolni jego miejsce przy stole.
 
 Dawna pułapka z `process.chdir` **już nie istnieje**: `WordDictionary` liczy
 ścieżkę słownika względem swojego pliku, a plansza i worek nie czytają niczego
@@ -148,6 +156,25 @@ Awans gościa na pełne konto zachowuje dorobek (`AuthService.upgradeGuest`).
 
 Ranking (Elo) zmienia się tylko w partiach między zarejestrowanymi graczami —
 pilnuje tego `StatsRepo.applyGameResult`, więc warstwa wyżej nie musi.
+
+## Strategia komputera
+
+Trzy poziomy w `server/game/Strategy.js`. Poziom 3 różni się od 2 tym, że ocenia
+resztę stojaka i grę pod końcówkę — i tylko dlatego, że to jedyne składniki,
+które **przeszły pomiar**.
+
+Zmieniając AI, najpierw zmierz: `npm run ai:duel` rozgrywa pary partii na tym
+samym losowaniu worka z zamienionymi stronami. Bez tego szczęście przy dobieraniu
+liter zagłusza różnicę umiejętności — przy pojedynczych partiach nawet wyraźnie
+gorsza strategia potrafi wygrać serię.
+
+Lista pomysłów, które już odpadły (z wynikami), jest w opisie klasy `Strategy`
+i w [README](README.md). Nie wprowadzaj ich ponownie bez nowego pomiaru.
+
+Uwaga na pułapkę: `LEVELS` to obiekt współdzielony przez cały proces.
+`Strategy` robi z niego kopię — nie zmieniaj tego, bo modyfikacja profilu
+jednego stołu przestawiłaby poziom trudności wszystkim naraz (i po cichu
+unieważniła każdy pomiar).
 
 ## Konwencje
 

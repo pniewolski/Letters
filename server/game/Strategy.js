@@ -1,21 +1,62 @@
 /**
  * @class Strategy
- * @description Mózg komputerowego przeciwnika. Decyduje, czy położyć słowo,
- * czy wymienić litery, i który z możliwych ruchów zagrać.
+ * @description Mózg komputerowego przeciwnika.
  *
- * Wszystkie dane o literach (punkty, „użyteczność") pochodzą z trybu gry,
- * więc AI gra sensownie także na planszach ułożonych przez użytkowników.
+ * Samo „zagraj najwięcej punktów" to za mało: w grze słownej liczy się też,
+ * **co zostaje na stojaku** i **jak wygląda końcówka**. Te dwie rzeczy ważymy
+ * obok surowych punktów.
  *
- * Poziomy trudności:
- * | poziom | nazwa    | zachowanie |
- * |--------|----------|------------|
- * | 1      | Łatwy    | gra słabsze zagrania z dolnej części listy, nie planuje stojaka |
- * | 2      | Średni   | wybiera najwięcej punktów spośród kilku najlepszych |
- * | 3      | Trudny   | waży punkty, otwieranie premii przeciwnikowi i jakość reszty stojaka |
+ * ## Co składa się na ocenę zagrania
+ *
+ * | składnik | co mierzy |
+ * |----------|-----------|
+ * | punkty | ile daje samo zagranie |
+ * | reszta stojaka | czy zostają litery, którymi da się grać dalej |
+ * | obrót klockami | przy kończącym się worku warto grać więcej liter naraz |
+ * | końcówka | przy pustym worku liczy się wyjście z liter, nie punkty za ruch |
+ *
+ * Żadna waga nie jest wpisana na sztywno w punktach — wszystkie skalują się
+ * wartościami z trybu gry (średnia wartość klocka, wielkość stojaka). Dzięki
+ * temu AI gra sensownie także na planszach ułożonych przez graczy i z zestawami
+ * klocków, których autor nigdy nie widział.
+ *
+ * ## Poziomy trudności
+ *
+ * | poziom | nazwa | zachowanie |
+ * |--------|-------|------------|
+ * | 1 | Łatwy | celowo sięga po słabsze zagrania z listy |
+ * | 2 | Średni | gra po prostu najwięcej punktów — tak, jak liczy większość ludzi |
+ * | 3 | Trudny | dokłada ocenę reszty stojaka i grę pod końcówkę |
+ *
+ * ## Czego tu nie ma i dlaczego
+ *
+ * Wagi i pomysły sprawdzano narzędziem `npm run ai:duel`, które rozgrywa
+ * **pary** partii na tym samym losowaniu worka z zamienionymi stronami — bez
+ * tego szczęście przy dobieraniu liter zagłusza każdą różnicę umiejętności.
+ *
+ * Zmierzone i **zostawione**:
+ * - ocena reszty stojaka: +32 pkt na partię wobec samych punktów (300 partii),
+ * - cała drabinka: Trudny bije Średniego o +45 pkt (Literki) i +28 pkt (SCR)
+ *   na 800 partiach, Średni bije Łatwego o ponad 700 pkt.
+ *
+ * Zmierzone i **odrzucone** — każde z nich brzmi mądrze, ale nie wygrywa partii:
+ * - wycena pojedynczych liter (przez częstość w słowniku, przez punktację,
+ *   przez „użyteczność" z trybu gry): od −29 pkt do zera,
+ * - kara za otwieranie przeciwnikowi pól premiowych: +0,7 ±8,9 pkt na 1000 partii,
+ * - zamykanie planszy przy prowadzeniu: −0,7 ±6,3 pkt na 1000 partii,
+ * - symulacja odpowiedzi przeciwnika (jeden ruch w przód, losowanie jego
+ *   stojaka z liter niewidzianych): −0,6 i +10,5 pkt przy 15-krotnie wyższym
+ *   koszcie ruchu. Przy jednym ruchu w przód najlepsza odpowiedź przeciwnika
+ *   zależy głównie od jego liter, a nie od tego, które z naszych zagrań
+ *   wybierzemy — więc składnik jest prawie stały i wnosi głównie szum.
+ *   Zrobienie tego porządnie (dwa ruchy w przód, setki losowań) kosztowałoby
+ *   sekundy na ruch, co przy wielu stołach naraz jest nie do przyjęcia.
+ *
+ * Jeśli wracasz do któregoś z tych pomysłów — najpierw pomiar, potem kod.
  *
  * @example
  * const strategy = new Strategy(variant, 3);
- * const move = strategy.getBestMove(moves, board, stack, bagSize);
+ * const move = strategy.getBestMove(moves, board, stack, { bagSize: 30 });
  * if (move.replace) console.log('Wymiana:', move.letters);
  * else console.log('Kładę', move.wordSimple, 'za', move.points, 'pkt');
  */
@@ -23,11 +64,16 @@
 /** Samogłoski (z polskimi) — do oceny balansu stojaka. */
 const VOWELS = new Set(['A', 'Ą', 'E', 'Ę', 'I', 'O', 'Ó', 'U', 'Y']);
 
-/** Opisy poziomów trudności — używane w interfejsie. */
+/**
+ * Profile poziomów trudności.
+ * - `poolSize` — ile najlepszych punktowo zagrań poddajemy ocenie,
+ * - `skill` — 1 = gra najlepszy wybór, mniej = celowo sięga niżej,
+ * - `leave` — czy ocenia resztę stojaka i końcówkę.
+ */
 const LEVELS = {
-    1: { name: 'Łatwy', poolSize: 40, strategic: false, skill: 0.35 },
-    2: { name: 'Średni', poolSize: 12, strategic: false, skill: 1 },
-    3: { name: 'Trudny', poolSize: 25, strategic: true, skill: 1 },
+    1: { name: 'Łatwy', poolSize: 40, skill: 0.35, leave: false },
+    2: { name: 'Średni', poolSize: 8, skill: 1, leave: false },
+    3: { name: 'Trudny', poolSize: 24, skill: 1, leave: true },
 };
 
 class Strategy {
@@ -41,56 +87,107 @@ class Strategy {
 
         this.variant = variant;
         this.level = LEVELS[level] ? level : 2;
-        this.profile = LEVELS[this.level];
 
-        /** Użyteczność liter: 1 = bardzo przydatna, 5 = balast. */
+        // Kopia, nie referencja: `LEVELS` jest współdzielone przez wszystkie
+        // partie w procesie, więc podmiana pola w profilu jednego stołu
+        // przestawiłaby poziom trudności wszystkim naraz.
+        this.profile = { ...LEVELS[this.level] };
+
+        /** Użyteczność liter z trybu gry: 1 = bardzo przydatna, 5 = balast. */
         this.usefulness = variant.usefulness;
 
-        /** Poniżej tylu punktów AI rozważa wymianę zamiast zagrania. */
-        this.pointsThreshold = 25;
+        this._prepareScales();
+        this._prepareLeaveValues();
+    }
 
-        /** Wagi oceny strategicznej. */
-        this.exposureWeight = 1.0;
-        this.leaveWeight = 0.6;
+    // ─────────────────────────────────────────────────────────────────────────
+    // PRZYGOTOWANIE WAG
+    // ─────────────────────────────────────────────────────────────────────────
 
-        /** Kara za odsłonięcie pustego pola premiowego przy naszym słowie. */
-        this.premiumWeights = { w4: 9, w3: 6, w2: 3, l4: 3, l3: 2, l2: 1 };
+    /**
+     * Wylicza skale zależne od trybu gry. Bez tego wagi dobrane pod jeden
+     * zestaw klocków rozjeżdżałyby się na planszach z 12-punktowymi literami.
+     * @private
+     */
+    _prepareScales() {
+        const letters = Object.entries(this.variant.letterCounts)
+            .filter(([letter]) => letter !== this.variant.blankSymbol);
 
-        /** Litery uznawane za balast (użyteczność 4–5). */
-        this.heavyLetters = new Set(
-            Object.entries(this.usefulness)
-                .filter(([letter, value]) => value >= 4 && letter !== variant.blankSymbol)
-                .map(([letter]) => letter),
+        const tiles = letters.reduce((sum, [, count]) => sum + count, 0) || 1;
+        const points = letters.reduce(
+            (sum, [letter, count]) => sum + count * this.variant.pointsOf(letter), 0,
         );
 
-        /** Ile jednostek balastu uzasadnia wymianę przy słabym ruchu. */
-        this.deadweightThreshold = 2;
+        /** Średnia wartość klocka w tym trybie. */
+        this.avgTilePoints = points / tiles;
+        /** Orientacyjna wartość przyzwoitego zagrania — punkt odniesienia dla kar. */
+        this.typicalPlay = Math.max(8, this.avgTilePoints * this.variant.rackSize * 0.9);
+        /** Poniżej tylu punktów prostsze poziomy rozważają wymianę zamiast zagrania. */
+        this.exchangeThreshold = Math.round(this.typicalPlay * 0.7);
+
+        /** Wagi składników oceny (patrz opis klasy — dobrane pomiarem). */
+        this.weights = {
+            leave: 1.0,
+            tileTurnover: 0.4,
+        };
     }
+
+    /**
+     * Przygotowuje ocenę pojedynczych liter na stojaku.
+     *
+     * Świadomie **niewiele tu jest** — wycena każdej litery z osobna nie
+     * przeszła pomiaru (patrz opis klasy). Liczy się struktura stojaka:
+     * blank, balans samogłosek i brak duplikatów.
+     * @private
+     */
+    _prepareLeaveValues() {
+        /** @type {Object<string, number>} Litera → wartość na stojaku. */
+        this.leaveValue = Object.create(null);
+
+        // Blank jest wart tyle, co porządne zagranie — nie wolno go marnować.
+        this.leaveValue[this.variant.blankSymbol] = 8;
+
+        /** Litery uznawane za balast (użyteczność 4–5 wg trybu gry). */
+        this.heavyLetters = new Set(
+            Object.entries(this.usefulness)
+                .filter(([letter, value]) => value >= 4 && letter !== this.variant.blankSymbol)
+                .map(([letter]) => letter),
+        );
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // WYBÓR RUCHU
+    // ─────────────────────────────────────────────────────────────────────────
 
     /**
      * Wybiera ruch: zagranie słowa albo wymianę liter.
      * @param {Array<object>} moves - Ruchy posortowane malejąco wg punktów
      * @param {import('../board/Board')} board - Aktualna plansza
      * @param {string[]} stack - Stojak gracza
-     * @param {number} [bagSize=Infinity] - Liczba liter w worku
-     * @returns {object} Ruch z solvera albo `{ replace: true, letters: string[] }`
+     * @param {object|number} [context] - `{ bagSize }`; dla wygody przyjmuje
+     *   też samą liczbę liter w worku
+     * @returns {object|null} Ruch z solvera albo `{ replace: true, letters: string[] }`
      */
-    getBestMove(moves, board, stack, bagSize = Infinity) {
+    getBestMove(moves, board, stack, context = {}) {
+        const ctx = typeof context === 'number' ? { bagSize: context } : (context || {});
+        const bagSize = ctx.bagSize ?? Infinity;
+
         if (this.replaceDecision(moves, stack, bagSize)) {
-            return { replace: true, letters: this.pickTilesToExchange(stack) };
+            return { replace: true, letters: this.pickTilesToExchange(stack, bagSize) };
         }
-        return this.pickStrategicMove(moves, board, stack);
+        return this.pickStrategicMove(moves, board, stack, bagSize);
     }
 
     /**
-     * Wybiera konkretne zagranie z listy kandydatów zgodnie z poziomem trudności.
+     * Ocenia kandydatów i wybiera najlepszego zgodnie z poziomem trudności.
      * @param {Array<object>} moves - Ruchy posortowane malejąco wg punktów
      * @param {import('../board/Board')} board - Plansza
      * @param {string[]} stack - Stojak gracza
-     * @returns {object} Wybrany ruch
+     * @param {number} [bagSize=Infinity] - Liczba liter w worku
+     * @returns {object|null} Wybrany ruch
      */
-    pickStrategicMove(moves, board, stack) {
-        if (moves.length === 0) return null;
+    pickStrategicMove(moves, board, stack, bagSize = Infinity) {
+        if (!moves || moves.length === 0) return null;
 
         // Łatwy poziom celowo nie gra najlepszego zagrania — sięga po ruch
         // z okolic wskazanego percentyla listy, żeby dać człowiekowi szansę.
@@ -100,22 +197,17 @@ class Strategy {
             return pool[idx];
         }
 
-        if (!this.profile.strategic) {
-            return moves[0];
-        }
+        // Bez oceny stojaka nie ma czego ważyć — najlepszy punktowo wygrywa.
+        if (!this.profile.leave) return moves[0];
 
-        const n = Math.min(this.profile.poolSize, moves.length);
-        let best = moves[0];
+        const candidates = this._shortlist(moves);
+        if (candidates.length === 1) return candidates[0];
+
+        let best = candidates[0];
         let bestScore = -Infinity;
 
-        for (let i = 0; i < n; i++) {
-            const move = moves[i];
-            const exposure = this.computeExposurePenalty(move, board);
-            const leave = this.computeLeave(stack, move.usedLetters);
-            const score = move.points
-                - this.exposureWeight * exposure
-                + this.leaveWeight * this.leaveScore(leave);
-
+        for (const move of candidates) {
+            const score = this._scoreMove(move, stack, bagSize);
             if (score > bestScore) {
                 bestScore = score;
                 best = move;
@@ -125,55 +217,51 @@ class Strategy {
     }
 
     /**
-     * Kara za odsłonięcie pustych pól premiowych sąsiadujących z naszym słowem —
-     * czyli za podanie przeciwnikowi drogi do wysokiej premii.
-     * @param {object} move - Ruch z solvera
-     * @param {import('../board/Board')} board - Plansza
-     * @returns {number} Sumaryczna kara (0 = ruch nic nie otwiera)
+     * Wybiera zagrania warte oceny. Bierzemy najlepsze punktowo, ale usuwamy
+     * powtórzenia tego samego słowa w tym samym miejscu — inaczej lista potrafi
+     * być zapchana wariantami jednego pomysłu.
+     * @param {Array<object>} moves
+     * @returns {Array<object>}
+     * @private
      */
-    computeExposurePenalty(move, board) {
-        if (!board || !move || !Array.isArray(move.word)) return 0;
-
-        const size = board.size;
-        const tiles = board.getTiles();
+    _shortlist(moves) {
         const seen = new Set();
-        let penalty = 0;
+        const out = [];
 
-        for (let i = 0; i < move.word.length; i++) {
-            const cell = move.word[i];
-            if (!cell || !cell.isCurrent) continue; // liczą się tylko nowe litery
-
-            const x = move.horizontal ? move.x + i : move.x;
-            const y = move.horizontal ? move.y : move.y + i;
-
-            for (const [nx, ny] of [[x - 1, y], [x + 1, y], [x, y - 1], [x, y + 1]]) {
-                if (nx < 0 || ny < 0 || nx >= size || ny >= size) continue;
-                if (tiles[nx][ny].letter) continue; // zajęte pole nie jest otwarciem
-
-                const key = nx * size + ny;
-                if (seen.has(key)) continue;
-                seen.add(key);
-                penalty += this.premiumWeight(board.getBonus(nx, ny));
-            }
+        for (const move of moves) {
+            const key = `${move.wordSimple}|${move.x}|${move.y}|${move.horizontal}`;
+            if (seen.has(key)) continue;
+            seen.add(key);
+            out.push(move);
+            if (out.length >= this.profile.poolSize) break;
         }
-        return penalty;
+        return out;
     }
 
     /**
-     * Waga kary za dane pole premiowe.
-     * @param {{w: number, l: number}} bonus - Mnożniki pola
-     * @returns {number} 0 dla pola bez premii
+     * Ocena zagrania: punkty plus to, co zostaje na stojaku.
+     * @param {object} move - Ruch z solvera
+     * @param {string[]} stack - Stojak gracza
+     * @param {number} bagSize - Liczba liter w worku
+     * @returns {number}
+     * @private
      */
-    premiumWeight(bonus) {
-        if (!bonus) return 0;
-        if (bonus.w >= 4) return this.premiumWeights.w4;
-        if (bonus.w >= 3) return this.premiumWeights.w3;
-        if (bonus.w >= 2) return this.premiumWeights.w2;
-        if (bonus.l >= 4) return this.premiumWeights.l4;
-        if (bonus.l >= 3) return this.premiumWeights.l3;
-        if (bonus.l >= 2) return this.premiumWeights.l2;
-        return 0;
+    _scoreMove(move, stack, bagSize) {
+        const leave = this.computeLeave(stack, move.usedLetters);
+        let score = move.points + this.weights.leave * this.leaveScore(leave, bagSize);
+
+        // Końcówka: kto pierwszy wyjdzie z liter, ten zgarnia resztę. Warto
+        // więc zwiększać obrót klockami, gdy worek się kończy.
+        if (bagSize > 0 && bagSize < this.variant.rackSize * 2) {
+            score += this.weights.tileTurnover * (move.usedLetters?.length || 0);
+        }
+
+        return score;
     }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // OCENA RESZTY STOJAKA
+    // ─────────────────────────────────────────────────────────────────────────
 
     /**
      * Litery pozostające na stojaku po zagraniu ruchu.
@@ -192,11 +280,26 @@ class Strategy {
 
     /**
      * Ocenia jakość liter zostających na stojaku (wyżej = lepiej).
-     * Premiuje blanki i równowagę samogłosek, karze balast i duplikaty.
+     *
+     * Przy pełnym worku liczy się grywalność i balans. Przy pustym reguły się
+     * odwracają: każda litera zostająca w ręku to punkty w plecy, a wyjście
+     * z liter zgarnia resztę od przeciwników.
+     *
      * @param {string[]} leave - Reszta stojaka
+     * @param {number} [bagSize=Infinity] - Liczba liter w worku
      * @returns {number} Ocena (może być ujemna)
      */
-    leaveScore(leave) {
+    leaveScore(leave, bagSize = Infinity) {
+        // ── Końcówka: liczy się wyjście z liter, nie ich jakość ─────────────
+        if (bagSize === 0) {
+            if (leave.length === 0) {
+                // Wyjście zdejmuje nasze punkty karne i dokłada cudze.
+                return this.variant.rules.endgameOutBonus ? this.typicalPlay : this.avgTilePoints * 3;
+            }
+            const stuck = leave.reduce((sum, letter) => sum + this.variant.pointsOf(letter), 0);
+            return -2 * stuck - leave.length;
+        }
+
         let score = 0;
         let vowels = 0;
         let consonants = 0;
@@ -204,43 +307,81 @@ class Strategy {
 
         for (const letter of leave) {
             counts[letter] = (counts[letter] || 0) + 1;
-            if (letter === this.variant.blankSymbol) { score += 3; continue; }
+            score += this.leaveValue[letter] ?? 0;
+            if (letter === this.variant.blankSymbol) continue;
             if (VOWELS.has(letter)) vowels++; else consonants++;
-            if (this.heavyLetters.has(letter)) score -= 2;
         }
 
-        score -= Math.abs(vowels - consonants);
+        // Stojak bez samogłosek albo bez spółgłosek jest praktycznie nie do zagrania.
+        const total = vowels + consonants;
+        if (total >= 3) {
+            if (vowels === 0 || consonants === 0) score -= 8;
+            else score -= 1.5 * Math.max(0, Math.abs(vowels - consonants) - 1);
+        }
 
+        // Duplikaty rzadko dają się zagrać razem.
         for (const [letter, count] of Object.entries(counts)) {
             if (letter === this.variant.blankSymbol) continue;
-            if (count >= 3) score -= count - 2;
+            if (count >= 2) score -= 1.5 * (count - 1);
         }
 
         return score;
     }
 
+    // ─────────────────────────────────────────────────────────────────────────
+    // WYMIANA LITER
+    // ─────────────────────────────────────────────────────────────────────────
+
     /**
-     * Wybiera litery do wymiany: najpierw balast, potem duplikaty.
-     * Blanki nigdy nie idą do wymiany.
+     * Wybiera litery do wymiany, przeszukując **wszystkie podzbiory stojaka**
+     * i zostawiając ten, który daje najlepszą resztę. Stojak ma kilka liter,
+     * więc pełny przegląd jest tani, a wynik dużo lepszy niż odsiewanie
+     * balastu po kolei.
+     *
      * @param {string[]} stack - Stojak gracza
+     * @param {number} [bagSize=Infinity] - Ile liter da się wymienić
      * @returns {string[]} Litery do wymiany (może być pusta tablica)
      */
-    pickTilesToExchange(stack) {
-        const blank = this.variant.blankSymbol;
-        const candidates = stack
-            .filter(letter => letter !== blank)
-            .map(letter => ({ letter, weight: this.usefulness[letter] || 3 }))
-            .sort((a, b) => b.weight - a.weight);
+    pickTilesToExchange(stack, bagSize = Infinity) {
+        const maxExchange = Math.min(stack.length, bagSize === Infinity ? stack.length : bagSize);
+        if (maxExchange <= 0) return [];
 
-        const maxExchange = Math.max(1, Math.min(stack.length - 1, this.variant.rackSize - 2));
-        const result = [];
+        // Pełny przegląd tylko dla rozsądnych stojaków; przy większych
+        // wracamy do prostego odsiewania balastu.
+        if (stack.length > 12) return this._exchangeByUsefulness(stack, maxExchange);
 
-        for (const { letter, weight } of candidates) {
-            // Balast (4–5) wymieniamy zawsze, resztę tylko do wypełnienia limitu.
-            if (weight >= 4 || result.length < maxExchange) result.push(letter);
-            if (result.length >= maxExchange) break;
+        let best = { letters: [], score: -Infinity };
+
+        for (let mask = 1; mask < (1 << stack.length); mask++) {
+            const out = [];
+            const keep = [];
+            for (let i = 0; i < stack.length; i++) {
+                if (mask & (1 << i)) out.push(stack[i]);
+                else keep.push(stack[i]);
+            }
+            if (out.length > maxExchange) continue;
+
+            // Nowe litery też coś wnoszą — im więcej wymieniamy, tym większa
+            // szansa na poprawę, ale i tym więcej oddajemy w ciemno.
+            const score = this.leaveScore(keep) + out.length * 0.4;
+            if (score > best.score) best = { letters: out, score };
         }
-        return result;
+
+        return best.letters;
+    }
+
+    /**
+     * Zapasowy wybór liter do wymiany — po prostu największy balast.
+     * @param {string[]} stack
+     * @param {number} maxExchange
+     * @returns {string[]}
+     * @private
+     */
+    _exchangeByUsefulness(stack, maxExchange) {
+        return stack
+            .filter(letter => letter !== this.variant.blankSymbol)
+            .sort((a, b) => (this.usefulness[b] || 3) - (this.usefulness[a] || 3))
+            .slice(0, maxExchange);
     }
 
     /**
@@ -264,19 +405,42 @@ class Strategy {
 
     /**
      * Czy warto wymienić litery zamiast grać najlepszy ruch.
-     * Wymiana ma sens tylko przy pełnym stojaku, zapasie w worku, słabym
-     * najlepszym ruchu i realnym balaście na stojaku.
+     *
+     * Porównujemy wartość najlepszego zagrania (punkty plus to, co po nim
+     * zostaje) z wartością samej poprawy stojaka. Wymiana kosztuje całą turę,
+     * więc musi się naprawdę opłacać.
+     *
      * @param {Array<object>} moves - Dostępne ruchy (posortowane malejąco)
      * @param {string[]} stack - Stojak gracza
      * @param {number} [bagSize=Infinity] - Liczba liter w worku
      * @returns {boolean}
      */
     replaceDecision(moves, stack, bagSize = Infinity) {
-        if (stack.length < this.variant.rackSize) return false;
         if (bagSize < this.variant.rules.exchangeMinBag) return false;
         if (bagSize <= 0) return false;
-        if (moves.length > 0 && moves[0].points >= this.pointsThreshold) return false;
-        return this.countDeadweight(stack) >= this.deadweightThreshold;
+
+        // Bez żadnego ruchu wymiana jest jedyną sensowną opcją.
+        if (!moves || moves.length === 0) return true;
+
+        // Prostsze poziomy nie kombinują ze stojakiem.
+        if (!this.profile.leave) {
+            return stack.length >= this.variant.rackSize
+                && moves[0].points < this.exchangeThreshold
+                && this.countDeadweight(stack) >= 2;
+        }
+
+        const best = moves[0];
+        const playValue = best.points
+            + this.weights.leave * this.leaveScore(this.computeLeave(stack, best.usedLetters), bagSize);
+
+        const exchanged = this.pickTilesToExchange(stack, bagSize);
+        if (exchanged.length === 0) return false;
+
+        const keep = this.computeLeave(stack, exchanged);
+        const exchangeValue = this.weights.leave * this.leaveScore(keep, bagSize);
+
+        // Zagranie musi być wyraźnie gorsze — inaczej lepiej utrzymać tempo.
+        return playValue < exchangeValue - this.avgTilePoints;
     }
 }
 

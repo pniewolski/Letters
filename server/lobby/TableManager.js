@@ -40,6 +40,18 @@ const TIMING = {
     sweepMs: 60 * 1000,
     /** Zabezpieczenie przed patologicznie długą symulacją. */
     maxSimulationSteps: 800,
+    /**
+     * Ile czasu dajemy na powrót, zanim zwolnimy miejsce przy stole, który
+     * jeszcze nie wystartował. Na telefonie zminimalizowanie przeglądarki
+     * zrywa połączenie — bez tej karencji gracz traciłby miejsce za każdym
+     * spojrzeniem na powiadomienie.
+     */
+    reconnectGraceMs: 90 * 1000,
+    /**
+     * Po tylu milisekundach nieobecności pasujemy za gracza, żeby partia
+     * nie stała w miejscu przez kogoś, komu padł telefon.
+     */
+    absentPassMs: 150 * 1000,
 };
 
 /** Ile stołów może mieć jeden gracz jednocześnie. */
@@ -68,6 +80,10 @@ class TableManager extends EventEmitter {
         this.aiTimers = new Map();
         /** @type {Map<number, NodeJS.Timeout>} tableId → timer limitu czasu na ruch. */
         this.clockTimers = new Map();
+        /** @type {Map<number, NodeJS.Timeout>} tableId → timer pasa za nieobecnego. */
+        this.absentTimers = new Map();
+        /** @type {Map<string, NodeJS.Timeout>} "tableId:userId" → timer zwolnienia miejsca. */
+        this.seatTimers = new Map();
         /** @type {Map<number, number>} tableId → licznik kroków symulacji. */
         this.simSteps = new Map();
 
@@ -271,6 +287,7 @@ class TableManager extends EventEmitter {
         if (!table) return;
 
         this._clearTimers(tableId);
+        this._clearSeatTimers(tableId);
 
         if (table.game && !table.game.finished && table.gameId) {
             this.games.abandon(table.gameId).catch(() => {});
@@ -534,6 +551,7 @@ class TableManager extends EventEmitter {
      * @private
      */
     _scheduleNext(table) {
+        this._clearTimers(table.id);
         if (!table.game || table.game.finished || table.status !== STATUS.PLAYING) return;
 
         if (table.isComputerTurn()) {
@@ -547,6 +565,43 @@ class TableManager extends EventEmitter {
             const timer = setTimeout(() => this._timeoutTurn(table), table.turnSeconds * 1000 + 250);
             this.clockTimers.set(table.id, timer);
         }
+
+        // Gracz bez połączenia nie może zablokować stołu na zawsze — po dłuższej
+        // nieobecności pasujemy za niego. Przy stole z zegarem zajmie się tym
+        // limit czasu, o ile jest krótszy.
+        const seat = table.seats[table.game.currentPlayer()];
+        if (seat && seat.type === 'human' && !seat.connected) {
+            const limit = table.turnSeconds > 0
+                ? Math.min(TIMING.absentPassMs, table.turnSeconds * 1000)
+                : TIMING.absentPassMs;
+            const timer = setTimeout(() => this._passForAbsent(table), limit + 250);
+            this.absentTimers.set(table.id, timer);
+        }
+    }
+
+    /**
+     * Pasuje za gracza, który stracił połączenie i nie wrócił.
+     * @param {GameTable} table
+     * @private
+     */
+    async _passForAbsent(table) {
+        this.absentTimers.delete(table.id);
+        if (!table.game || table.game.finished || table.status !== STATUS.PLAYING) return;
+
+        const slot = table.game.currentPlayer();
+        const seat = table.seats[slot];
+        if (!seat || seat.type !== 'human' || seat.connected) return;
+
+        const result = table.game.pass(slot);
+        this.emit('move', { table, move: { ...result.move, absent: true } });
+        this.emit('chat', {
+            table,
+            entry: {
+                userId: null, name: 'Stół', slot, system: true, at: Date.now(),
+                message: `${seat.name} stracił połączenie — pas.`,
+            },
+        });
+        await this._afterTurn(table);
     }
 
     /**
@@ -684,13 +739,20 @@ class TableManager extends EventEmitter {
         if (!table) return;
 
         if (table.status === STATUS.WAITING && table.seatOf(userId)) {
-            // Przed startem rozłączenie zwalnia miejsce — inaczej stoły by się zatykały.
-            this.leave(userId);
+            // Przed startem miejsce trzeba w końcu zwolnić, żeby stoły się nie
+            // zatykały — ale dopiero po karencji na powrót.
+            table.setConnected(userId, false);
+            this._scheduleSeatRelease(table, userId);
+            this.emit('table', { table });
+            this.emit('lobby');
             return;
         }
 
         table.setConnected(userId, false);
         table.spectators.delete(userId);
+
+        // Gracz, który zniknął w trakcie swojej tury, nie może blokować partii.
+        if (table.status === STATUS.PLAYING) this._scheduleNext(table);
 
         // Bez żywej duszy przy stole nie ma po co dalej liczyć ruchów.
         if (this._isDeserted(table)) {
@@ -708,9 +770,53 @@ class TableManager extends EventEmitter {
     markConnected(userId) {
         const table = this.tableOf(userId);
         if (!table) return null;
+
+        this._cancelSeatRelease(table.id, userId);
         table.setConnected(userId, true);
+
+        // Wrócił w swojej turze — kasujemy pas za nieobecnego i wracamy do zegara.
+        if (table.status === STATUS.PLAYING) this._scheduleNext(table);
+
         this.emit('table', { table });
+        this.emit('lobby');
         return table;
+    }
+
+    /**
+     * Planuje zwolnienie miejsca gracza, który stracił połączenie przed startem.
+     * @param {GameTable} table
+     * @param {number} userId
+     * @private
+     */
+    _scheduleSeatRelease(table, userId) {
+        const key = `${table.id}:${userId}`;
+        this._cancelSeatRelease(table.id, userId);
+
+        const timer = setTimeout(() => {
+            this.seatTimers.delete(key);
+
+            const current = this.tables.get(table.id);
+            if (!current) return;
+
+            const seat = current.seatOf(userId);
+            if (!seat || seat.connected) return; // zdążył wrócić
+
+            this.leave(userId);
+        }, TIMING.reconnectGraceMs);
+
+        this.seatTimers.set(key, timer);
+    }
+
+    /**
+     * Kasuje zaplanowane zwolnienie miejsca.
+     * @param {number} tableId
+     * @param {number} userId
+     * @private
+     */
+    _cancelSeatRelease(tableId, userId) {
+        const key = `${tableId}:${userId}`;
+        const timer = this.seatTimers.get(key);
+        if (timer) { clearTimeout(timer); this.seatTimers.delete(key); }
     }
 
     /**
@@ -721,7 +827,15 @@ class TableManager extends EventEmitter {
      */
     _isDeserted(table) {
         const humansConnected = table.seats.some(s => s.type === 'human' && s.connected);
-        return !humansConnected && table.spectators.size === 0;
+        if (humansConnected || table.spectators.size > 0) return false;
+
+        // Ktoś, komu zerwało połączenie, ma jeszcze karencję na powrót —
+        // dopóki trwa, stół nie jest opuszczony.
+        const prefix = `${table.id}:`;
+        for (const key of this.seatTimers.keys()) {
+            if (key.startsWith(prefix)) return false;
+        }
+        return true;
     }
 
     /**
@@ -730,9 +844,23 @@ class TableManager extends EventEmitter {
      * @private
      */
     _clearTimers(tableId) {
-        for (const map of [this.aiTimers, this.clockTimers]) {
+        for (const map of [this.aiTimers, this.clockTimers, this.absentTimers]) {
             const timer = map.get(tableId);
             if (timer) { clearTimeout(timer); map.delete(tableId); }
+        }
+    }
+
+    /**
+     * Kasuje karencje powrotu wszystkich graczy tego stołu.
+     * @param {number} tableId
+     * @private
+     */
+    _clearSeatTimers(tableId) {
+        const prefix = `${tableId}:`;
+        for (const [key, timer] of [...this.seatTimers]) {
+            if (!key.startsWith(prefix)) continue;
+            clearTimeout(timer);
+            this.seatTimers.delete(key);
         }
     }
 
@@ -774,7 +902,10 @@ class TableManager extends EventEmitter {
     /** Zatrzymuje wszystkie timery (zamykanie serwera). */
     shutdown() {
         clearInterval(this.sweeper);
-        for (const id of [...this.tables.keys()]) this._clearTimers(id);
+        for (const id of [...this.tables.keys()]) {
+            this._clearTimers(id);
+            this._clearSeatTimers(id);
+        }
     }
 }
 
