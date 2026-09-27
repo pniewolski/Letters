@@ -48,11 +48,29 @@ const TIMING = {
      */
     reconnectGraceMs: 90 * 1000,
     /**
+     * Ile czasu trzymamy trwającą partię, przy której nie został nikt
+     * podłączony. W grze z komputerem gracz jest przy stole jedynym
+     * człowiekiem — bez tej karencji uśpienie telefonu kończyłoby partię.
+     */
+    abandonGraceMs: 10 * 60 * 1000,
+    /**
      * Po tylu milisekundach nieobecności pasujemy za gracza, żeby partia
      * nie stała w miejscu przez kogoś, komu padł telefon.
      */
     absentPassMs: 150 * 1000,
 };
+
+/**
+ * Tworzy błąd z komunikatem przeznaczonym dla gracza (zajęte miejsce, nie ta
+ * kolej). Oznaczony jako spodziewany, więc nie trafia do logu serwera.
+ * @param {string} message - Treść po polsku
+ * @returns {Error}
+ */
+function tableError(message) {
+    const err = new Error(message);
+    err.expected = true;
+    return err;
+}
 
 /** Ile stołów może mieć jeden gracz jednocześnie. */
 const MAX_TABLES_PER_USER = 3;
@@ -86,6 +104,8 @@ class TableManager extends EventEmitter {
         this.seatTimers = new Map();
         /** @type {Map<number, number>} tableId → licznik kroków symulacji. */
         this.simSteps = new Map();
+        /** @type {Set<number>} Gracze, którzy właśnie zakładają stół. */
+        this.creating = new Set();
 
         this.sweeper = setInterval(() => this.sweep(), TIMING.sweepMs);
         if (this.sweeper.unref) this.sweeper.unref();
@@ -112,11 +132,31 @@ class TableManager extends EventEmitter {
      * @throws {Error} Gdy przekroczono limit stołów albo tryb gry nie istnieje
      */
     async create(user, options = {}) {
+        // Zakładanie ma po drodze kilka oczekiwań (baza, hash hasła), więc drugie
+        // żądanie tego samego gracza ominęłoby kontrole i posadziło go przy
+        // dwóch stołach naraz.
+        if (this.creating.has(user.id)) throw tableError('Stół jest już zakładany — chwilę cierpliwości.');
+        this.creating.add(user.id);
+        try {
+            return await this._create(user, options);
+        } finally {
+            this.creating.delete(user.id);
+        }
+    }
+
+    /**
+     * Właściwe zakładanie stołu — patrz {@link TableManager#create}.
+     * @param {object} user
+     * @param {object} options
+     * @returns {Promise<GameTable>}
+     * @private
+     */
+    async _create(user, options) {
         const owned = [...this.tables.values()].filter(
             t => t.ownerId === user.id && t.status !== STATUS.CLOSED,
         );
         if (owned.length >= MAX_TABLES_PER_USER) {
-            throw new Error(`Masz już ${MAX_TABLES_PER_USER} otwarte stoły — zamknij któryś przed założeniem nowego.`);
+            throw tableError(`Masz już ${MAX_TABLES_PER_USER} otwarte stoły — zamknij któryś przed założeniem nowego.`);
         }
 
         // Przy jednym stole naraz — inaczej zostalibyśmy na widowni poprzedniego
@@ -126,10 +166,13 @@ class TableManager extends EventEmitter {
         const variant = options.variantId
             ? await this.variants.getCompiled(options.variantId)
             : await this.variants.getDefaultCompiled();
-        if (!variant) throw new Error('Nie znaleziono wybranego trybu gry.');
+        if (!variant) throw tableError('Nie znaleziono wybranego trybu gry.');
 
-        const seats = Math.max(2, Math.min(4, Number(options.seats) || 2));
-        const computerSeats = Math.max(0, Math.min(seats, Number(options.computerSeats) || 0));
+        const seats = Math.max(2, Math.min(4, Math.floor(Number(options.seats)) || 2));
+        const computerSeats = Math.max(0, Math.min(seats, Math.floor(Number(options.computerSeats)) || 0));
+        const name = String(options.name || `Stolik ${user.displayName}`).trim().slice(0, 64);
+        const aiLevel = Math.max(1, Math.min(3, Math.floor(Number(options.aiLevel)) || 2));
+        const turnSeconds = Math.max(0, Math.min(3600, Math.floor(Number(options.turnSeconds)) || 0));
 
         // Partie z komputerem nie liczą się do rankingu. Gościom ranking i tak
         // nie przysługuje — pilnuje tego warstwa statystyk, więc tutaj tylko
@@ -145,16 +188,16 @@ class TableManager extends EventEmitter {
 
         const id = await this.db.insert('game_tables', {
             code,
-            name: String(options.name || `Stolik ${user.displayName}`).trim().slice(0, 64),
+            name,
             owner_id: user.id,
             variant_id: variant.meta.id ?? 0,
             mode: computerSeats === seats ? 'compcomp' : (computerSeats > 0 ? 'computer' : 'human'),
             seats,
-            ai_level: Math.max(1, Math.min(3, Number(options.aiLevel) || 2)),
+            ai_level: aiLevel,
             is_private: options.isPrivate ? 1 : 0,
             password_hash: passwordHash,
             rated: rated ? 1 : 0,
-            turn_seconds: Math.max(0, Math.min(3600, Number(options.turnSeconds) || 0)),
+            turn_seconds: turnSeconds,
             status: STATUS.WAITING,
             created_at: now,
             updated_at: now,
@@ -163,16 +206,16 @@ class TableManager extends EventEmitter {
         const table = new GameTable({
             id,
             code,
-            name: String(options.name || `Stolik ${user.displayName}`).trim().slice(0, 64),
+            name,
             ownerId: user.id,
             variant,
             seats,
             computerSeats,
-            aiLevel: Number(options.aiLevel) || 2,
+            aiLevel,
             isPrivate: !!options.isPrivate,
             passwordHash,
             rated,
-            turnSeconds: Number(options.turnSeconds) || 0,
+            turnSeconds,
         });
 
         this.tables.set(id, table);
@@ -192,7 +235,7 @@ class TableManager extends EventEmitter {
             this.userTable.set(user.id, id);
         }
 
-        this._maybeStart(table);
+        await this._maybeStart(table);
         this.emit('lobby');
         return table;
     }
@@ -210,7 +253,7 @@ class TableManager extends EventEmitter {
      */
     async join(user, tableId, options = {}) {
         const table = this.tables.get(Number(tableId));
-        if (!table || table.status === STATUS.CLOSED) throw new Error('Ten stół już nie istnieje.');
+        if (!table || table.status === STATUS.CLOSED) throw tableError('Ten stół już nie istnieje.');
 
         // Powrót do stołu, przy którym już siedzimy — bez pytania o hasło.
         const existing = table.seatOf(user.id);
@@ -222,7 +265,7 @@ class TableManager extends EventEmitter {
         }
 
         if (table.passwordHash && !await verifyPassword(options.password || '', table.passwordHash)) {
-            throw new Error('Nieprawidłowe hasło do stołu.');
+            throw tableError('Nieprawidłowe hasło do stołu.');
         }
 
         // Z innego stołu odchodzimy najpierw.
@@ -236,14 +279,14 @@ class TableManager extends EventEmitter {
                 avatar: user.avatar,
                 isGuest: user.isGuest,
             });
-            if (!result.success && table.firstOpenSeat() !== -1) throw new Error(result.error);
+            if (!result.success && table.firstOpenSeat() !== -1) throw tableError(result.error);
             if (!result.success) table.spectators.add(user.id);
         } else {
             table.spectators.add(user.id);
         }
 
         this.userTable.set(user.id, table.id);
-        this._maybeStart(table);
+        await this._maybeStart(table);
         this.emit('table', { table });
         this.emit('lobby');
         return table;
@@ -273,7 +316,7 @@ class TableManager extends EventEmitter {
             && previous.game && !previous.game.finished;
 
         if (seat && playing) {
-            throw new Error(
+            throw tableError(
                 `Siedzisz przy trwającej partii („${previous.name}"). `
                 + 'Najpierw ją zakończ albo wstań od stołu — wyjście liczy się jako poddanie.',
             );
@@ -296,12 +339,18 @@ class TableManager extends EventEmitter {
         if (!table) return null;
 
         const wasPlaying = table.status === STATUS.PLAYING;
+        const seat = table.seatOf(userId);
+        this._cancelSeatRelease(table.id, userId);
         table.stand(userId);
 
-        if (wasPlaying && table.game && table.game.finished) {
-            this._concludeGame(table).catch(err => console.error('[Stoły] Błąd zapisu partii:', err));
-        } else if (wasPlaying) {
-            this._afterTurn(table);
+        // Wyjście widza niczego w partii nie zmienia.
+        if (wasPlaying && seat && table.game) {
+            const last = table.game.moves[table.game.moves.length - 1];
+            if (last && last.type === 'resign' && last.slot === seat.slot) {
+                this.emit('move', { table, move: last });
+            }
+            const next = table.game.finished ? this._concludeGame(table) : this._afterTurn(table);
+            next.catch(err => console.error('[Stoły] Błąd po wyjściu gracza:', err));
         }
 
         if (this._isDeserted(table)) {
@@ -330,16 +379,21 @@ class TableManager extends EventEmitter {
         }
 
         table.status = STATUS.CLOSED;
-        for (const seat of table.seats) {
-            if (seat.userId != null) this.userTable.delete(seat.userId);
-        }
-        for (const id of table.spectators) this.userTable.delete(id);
-
-        this.tables.delete(tableId);
         this.db.update('game_tables', { status: STATUS.CLOSED, updated_at: Date.now() }, { id: tableId })
             .catch(() => {});
 
+        // Najpierw zawiadomienie, potem wypisanie — odbiorców wyznacza to,
+        // kto jest jeszcze przy stole.
         this.emit('table', { table, closed: true, reason });
+
+        for (const seat of table.seats) {
+            if (seat.userId != null && this.userTable.get(seat.userId) === tableId) this.userTable.delete(seat.userId);
+        }
+        for (const id of table.spectators) {
+            if (this.userTable.get(id) === tableId) this.userTable.delete(id);
+        }
+        this.tables.delete(tableId);
+
         this.emit('lobby');
     }
 
@@ -351,9 +405,9 @@ class TableManager extends EventEmitter {
      */
     async startNow(userId) {
         const table = this.tableOf(userId);
-        if (!table) throw new Error('Nie siedzisz przy żadnym stole.');
-        if (table.ownerId !== userId) throw new Error('Tylko zakładający stół może rozpocząć partię.');
-        if (table.status !== STATUS.WAITING) throw new Error('Partia już trwa.');
+        if (!table) throw tableError('Nie siedzisz przy żadnym stole.');
+        if (table.ownerId !== userId) throw tableError('Tylko zakładający stół może rozpocząć partię.');
+        if (table.status !== STATUS.WAITING) throw tableError('Partia już trwa.');
 
         table.fillOpenSeatsWithComputers();
         // Stół z komputerem przestaje być rankingowy.
@@ -372,8 +426,17 @@ class TableManager extends EventEmitter {
      */
     async rematch(userId) {
         const table = this.tableOf(userId);
-        if (!table) throw new Error('Nie siedzisz przy żadnym stole.');
-        if (table.status !== STATUS.FINISHED) throw new Error('Partia jeszcze się nie skończyła.');
+        if (!table) throw tableError('Nie siedzisz przy żadnym stole.');
+        if (table.status !== STATUS.FINISHED) throw tableError('Partia jeszcze się nie skończyła.');
+        if (!table.seatOf(userId)) throw tableError('Rewanż może zaproponować tylko gracz.');
+
+        // Kto wyszedł w trakcie partii, zachował miejsce tylko na potrzeby
+        // wyniku. Do rewanżu go nie wciągamy — zwalniamy miejsce dla innych.
+        for (const seat of table.seats) {
+            if (seat.type === 'human' && this.userTable.get(seat.userId) !== table.id) {
+                table.releaseSeat(seat.slot);
+            }
+        }
 
         table.resetForRematch();
         await this._maybeStart(table);
@@ -395,13 +458,13 @@ class TableManager extends EventEmitter {
      */
     _requireTurn(userId) {
         const table = this.tableOf(userId);
-        if (!table) throw new Error('Nie siedzisz przy żadnym stole.');
-        if (table.status !== STATUS.PLAYING || !table.game) throw new Error('Partia nie jest w toku.');
-        if (table.game.finished) throw new Error('Partia już się zakończyła.');
+        if (!table) throw tableError('Nie siedzisz przy żadnym stole.');
+        if (table.status !== STATUS.PLAYING || !table.game) throw tableError('Partia nie jest w toku.');
+        if (table.game.finished) throw tableError('Partia już się zakończyła.');
 
         const seat = table.seatOf(userId);
-        if (!seat) throw new Error('Jesteś widzem — nie możesz wykonywać ruchów.');
-        if (table.game.currentPlayer() !== seat.slot) throw new Error('To nie twoja kolej.');
+        if (!seat) throw tableError('Jesteś widzem — nie możesz wykonywać ruchów.');
+        if (table.game.currentPlayer() !== seat.slot) throw tableError('To nie twoja kolej.');
 
         return { table, slot: seat.slot };
     }
@@ -460,10 +523,12 @@ class TableManager extends EventEmitter {
     async resign(userId) {
         const table = this.tableOf(userId);
         if (!table || !table.game || table.status !== STATUS.PLAYING) {
-            throw new Error('Nie ma czego poddawać.');
+            throw tableError('Nie ma czego poddawać.');
         }
         const seat = table.seatOf(userId);
-        if (!seat) throw new Error('Jesteś widzem.');
+        if (!seat) throw tableError('Jesteś widzem.');
+        if (table.game.finished) throw tableError('Partia już się zakończyła.');
+        if (table.game.resigned.has(seat.slot)) throw tableError('Ta partia jest już przez ciebie poddana.');
 
         const result = table.game.resign(seat.slot);
         seat.resigned = true;
@@ -482,10 +547,10 @@ class TableManager extends EventEmitter {
      */
     hints(userId, count = 5) {
         const table = this.tableOf(userId);
-        if (!table || !table.game) throw new Error('Partia nie jest w toku.');
+        if (!table || !table.game) throw tableError('Partia nie jest w toku.');
 
         const seat = table.seatOf(userId);
-        if (!seat) throw new Error('Jesteś widzem — podpowiedzi są dla graczy.');
+        if (!seat) throw tableError('Jesteś widzem — podpowiedzi są dla graczy.');
 
         return table.game.hints(seat.slot, Math.max(1, Math.min(12, count)));
     }
@@ -500,10 +565,10 @@ class TableManager extends EventEmitter {
      */
     chat(userId, name, message) {
         const table = this.tableOf(userId);
-        if (!table) throw new Error('Nie siedzisz przy żadnym stole.');
+        if (!table) throw tableError('Nie siedzisz przy żadnym stole.');
 
         const text = String(message || '').trim().slice(0, 400);
-        if (!text) throw new Error('Pusta wiadomość.');
+        if (!text) throw tableError('Pusta wiadomość.');
 
         const seat = table.seatOf(userId);
         const entry = {
@@ -587,29 +652,47 @@ class TableManager extends EventEmitter {
      * @private
      */
     _scheduleNext(table) {
+        // Zaplanowany ruch komputera zostaje: planowanie powtarza się przy
+        // każdym powrocie i rozłączeniu gracza, więc kasowanie go tutaj
+        // pozwalałoby wstrzymywać komputer w nieskończoność.
+        const pendingAi = this.aiTimers.get(table.id);
+        this.aiTimers.delete(table.id);
         this._clearTimers(table.id);
-        if (!table.game || table.game.finished || table.status !== STATUS.PLAYING) return;
+
+        if (!table.game || table.game.finished || table.status !== STATUS.PLAYING) {
+            clearTimeout(pendingAi);
+            return;
+        }
 
         if (table.isComputerTurn()) {
+            if (pendingAi) { this.aiTimers.set(table.id, pendingAi); return; }
             const delay = table.mode === 'compcomp' ? TIMING.simulationStepMs : TIMING.computerDelayMs;
             const timer = setTimeout(() => this._runComputerTurn(table), delay);
             this.aiTimers.set(table.id, timer);
             return;
         }
 
-        if (table.turnSeconds > 0) {
-            const timer = setTimeout(() => this._timeoutTurn(table), table.turnSeconds * 1000 + 250);
+        // Liczymy od tego, co zostało na zegarze, a nie od pełnego limitu:
+        // planowanie powtarza się także w środku tury (rozłączenie, powrót)
+        // i nie może wtedy dawać graczowi czasu od nowa.
+        const timeLeft = table.timeLeftMs();
+        if (timeLeft != null) {
+            const timer = setTimeout(() => this._timeoutTurn(table), timeLeft + 250);
             this.clockTimers.set(table.id, timer);
         }
 
         // Gracz bez połączenia nie może zablokować stołu na zawsze — po dłuższej
         // nieobecności pasujemy za niego. Przy stole z zegarem zajmie się tym
         // limit czasu, o ile jest krótszy.
+        // Pasujemy tylko wtedy, gdy ktoś na ten ruch czeka — w grze z samym
+        // komputerem partia po prostu stoi do powrotu gracza.
         const seat = table.seats[table.game.currentPlayer()];
-        if (seat && seat.type === 'human' && !seat.connected) {
-            const limit = table.turnSeconds > 0
-                ? Math.min(TIMING.absentPassMs, table.turnSeconds * 1000)
-                : TIMING.absentPassMs;
+        const someoneWaits = table.seats.some(s => s.type === 'human' && s.connected);
+        if (seat && seat.type === 'human' && !seat.connected && someoneWaits) {
+            // Nieobecność liczymy od początku tury, żeby kolejne planowania
+            // nie odsuwały pasa.
+            const absentLeft = Math.max(0, TIMING.absentPassMs - (table.turnElapsedMs() || 0));
+            const limit = timeLeft != null ? Math.min(absentLeft, timeLeft) : absentLeft;
             const timer = setTimeout(() => this._passForAbsent(table), limit + 250);
             this.absentTimers.set(table.id, timer);
         }
@@ -724,11 +807,16 @@ class TableManager extends EventEmitter {
                     if (change) r.ratingDelta = change.after - change.before;
                 }
             }
-            await this.db.update('game_tables', { status: STATUS.FINISHED, updated_at: Date.now() }, { id: table.id });
+            // Stół mógł zostać w międzyczasie zamknięty (ostatni gracz wyszedł) —
+            // wtedy jego status w bazie jest już ostateczny.
+            if (this.tables.has(table.id)) {
+                await this.db.update('game_tables', { status: STATUS.FINISHED, updated_at: Date.now() }, { id: table.id });
+            }
         } catch (err) {
             console.error('[Stoły] Nie udało się zapisać wyniku partii:', err);
         }
 
+        if (!this.tables.has(table.id)) return;
         this.emit('game', { table });
         this.emit('over', { table, results });
         this.emit('lobby');
@@ -778,14 +866,20 @@ class TableManager extends EventEmitter {
             // Przed startem miejsce trzeba w końcu zwolnić, żeby stoły się nie
             // zatykały — ale dopiero po karencji na powrót.
             table.setConnected(userId, false);
-            this._scheduleSeatRelease(table, userId);
+            this._scheduleSeatRelease(table, userId, TIMING.reconnectGraceMs);
             this.emit('table', { table });
             this.emit('lobby');
             return;
         }
 
         table.setConnected(userId, false);
-        table.spectators.delete(userId);
+        if (table.spectators.delete(userId)) this.userTable.delete(userId);
+
+        // W trakcie partii miejsce zostaje przy graczu, a karencja chroni stół
+        // przed zamknięciem, gdy był przy nim ostatnim podłączonym.
+        if (table.status === STATUS.PLAYING && table.seatOf(userId)) {
+            this._scheduleSeatRelease(table, userId, TIMING.abandonGraceMs);
+        }
 
         // Gracz, który zniknął w trakcie swojej tury, nie może blokować partii.
         if (table.status === STATUS.PLAYING) this._scheduleNext(table);
@@ -819,12 +913,15 @@ class TableManager extends EventEmitter {
     }
 
     /**
-     * Planuje zwolnienie miejsca gracza, który stracił połączenie przed startem.
+     * Planuje koniec karencji gracza, który stracił połączenie. Przed startem
+     * partii zwalniamy wtedy jego miejsce; w trakcie partii miejsce zostaje,
+     * a stół zamykamy tylko, jeśli nie ma już przy nim nikogo.
      * @param {GameTable} table
      * @param {number} userId
+     * @param {number} graceMs - Długość karencji
      * @private
      */
-    _scheduleSeatRelease(table, userId) {
+    _scheduleSeatRelease(table, userId, graceMs) {
         const key = `${table.id}:${userId}`;
         this._cancelSeatRelease(table.id, userId);
 
@@ -837,8 +934,10 @@ class TableManager extends EventEmitter {
             const seat = current.seatOf(userId);
             if (!seat || seat.connected) return; // zdążył wrócić
 
-            this.leave(userId);
-        }, TIMING.reconnectGraceMs);
+            if (current.status === STATUS.WAITING) this.leave(userId);
+            else if (this._isDeserted(current)) this.close(current.id, 'brak graczy');
+        }, graceMs);
+        if (timer.unref) timer.unref();
 
         this.seatTimers.set(key, timer);
     }

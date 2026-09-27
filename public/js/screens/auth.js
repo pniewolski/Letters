@@ -6,7 +6,7 @@
  */
 
 import { el, modal, toast } from '../ui.js';
-import { store, setState, setToken } from '../store.js';
+import { store, setState, setToken, clearPlacement } from '../store.js';
 import { api } from '../api.js';
 import { authenticate, connect, disconnect } from '../net.js';
 import { refresh } from '../router.js';
@@ -40,6 +40,7 @@ export async function logout() {
     try { await api.post('/auth/logout'); } catch { /* sesja i tak przepada */ }
     setToken(null);
     setState({ user: null, table: null, game: null, results: null, tables: [] });
+    clearPlacement();
     disconnect();
     connect();
     refresh();

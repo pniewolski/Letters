@@ -31,7 +31,8 @@ const fetch = require('node-fetch');
 const Board = require('../board/Board');
 const Solver = require('../board/Solver');
 
-const SIZE = 15;
+/** Wymiary przyjmowane, gdy wywołujący nie poda trybu gry (klasyczna plansza). */
+const DEFAULT_DIMS = { size: 15, rackSize: 7 };
 const MAX_DIM = 800; // Wyższa rozdzielczość = lepszy OCR kafelków (15x15 → ~80px/pole)
 
 const OPENAI_DEFAULT_URL = 'https://api.openai.com/v1/chat/completions';
@@ -128,28 +129,29 @@ async function resizeImage(buffer) {
  * @param {string} alphabet - Alfabet gry (dozwolone litery)
  * @returns {string}
  */
-function buildPrompt(alphabet) {
+function buildPrompt(alphabet, dims = DEFAULT_DIMS) {
+    const { size, rackSize } = dims;
     return [
         'Jesteś ekspertem rozpoznawania planszy gry słownej ze zdjęcia.',
-        'Na obrazie widnieje plansza 15x15 oraz stojak (rack) z literami gracza.',
+        `Na obrazie widnieje plansza ${size}x${size} oraz stojak (rack) z literami gracza.`,
         'UWAGA: Gra jest w toku — na planszy NA PEWNO leżą litery. Jeśli widzisz pustą planszę, przyjrzyj się dokładniej kafelkom na siatce.',
         '',
         'Jak rozpoznać elementy na zdjęciu:',
-        '- Plansza to kwadratowa siatka 15x15 pól. Kafelki z literami to jasne/beżowe prostokąty z literą i małą liczbą (wartość punktowa).',
+        `- Plansza to kwadratowa siatka ${size}x${size} pól. Kafelki z literami to jasne/beżowe prostokąty z literą i małą liczbą (wartość punktowa).`,
         '- Puste pola planszy to kolorowe kwadraty (premium squares) lub puste beżowe/zielone pola.',
-        '- Stojak gracza to rząd 7 (lub mniej) kafelków poniżej planszy lub w dolnej części zdjęcia.',
+        `- Stojak gracza to rząd ${rackSize} (lub mniej) kafelków poniżej planszy lub w dolnej części zdjęcia.`,
         '- Każdy kafelek ma JEDNĄ literę (duża, wyraźna) i małą cyfrę w rogu (punkty) — odczytaj LITERĘ, zignoruj cyfrę.',
         '',
         `Dozwolone litery w tej grze (polski alfabet): ${alphabet}`,
         '',
         'Zwróć WYŁĄCZNIE obiekt JSON w formacie:',
         '{',
-        '  "board": [15 łańcuchów, każdy dokładnie 15 znaków],',
+        `  "board": [${size} łańcuchów, każdy dokładnie ${size} znaków],`,
         '  "rack":  ["A","B", ... litery ze stojaka gracza]',
         '}',
         '',
         'Zasady kodowania planszy:',
-        '- Każdy z 15 łańcuchów to jeden wiersz planszy, od góry do dołu.',
+        `- Każdy z ${size} łańcuchów to jeden wiersz planszy, od góry do dołu.`,
         '- Znak o indeksie i w łańcuchu to kolumna i (od lewej), licząc od 0.',
         '- Puste pole = kropka ".".',
         '- Zwykła litera = WIELKA litera z alfabetu.',
@@ -159,7 +161,7 @@ function buildPrompt(alphabet) {
         '- Podaj litery WIELKIMI literami.',
         '- Pusty żeton (blank) w stojaku zapisz jako gwiazdkę "*".',
         '',
-        'WAŻNE: Dokładnie przeanalizuj KAŻDE pole planszy 15x15. Na planszy powinny być słowa ułożone poziomo i pionowo. Nie zwracaj pustej planszy jeśli widzisz kafelki z literami.',
+        `WAŻNE: Dokładnie przeanalizuj KAŻDE pole planszy ${size}x${size}. Na planszy powinny być słowa ułożone poziomo i pionowo. Nie zwracaj pustej planszy jeśli widzisz kafelki z literami.`,
         'Nie dodawaj komentarzy ani markdown. Zwróć czysty JSON.',
     ].join('\n');
 }
@@ -190,21 +192,21 @@ function extractJson(text) {
  * @param {string} alphabet - Alfabet gry
  * @returns {Promise<{board: string[], rack: string[]}>}
  */
-async function callVisionModel(imageBuffer, mime, alphabet) {
+async function callVisionModel(imageBuffer, mime, alphabet, dims = DEFAULT_DIMS) {
     const cfg = loadAiConfig();
     if (!cfg.apiKey) {
         throw new Error('Brak klucza API modelu. Ustaw AI_API_KEY lub server/ai.config.json.');
     }
 
-    const prompt = buildPrompt(alphabet);
+    const prompt = buildPrompt(alphabet, dims);
     const base64 = imageBuffer.toString('base64');
 
     log(`Łączenie z modelem AI: provider=${cfg.provider}, model=${cfg.model}`);
     const t0 = Date.now();
     try {
         const result = cfg.provider === 'gemini'
-            ? await callGemini(cfg, prompt, mime, base64, alphabet)
-            : await callOpenAi(cfg, prompt, mime, base64, alphabet);
+            ? await callGemini(cfg, prompt, mime, base64, alphabet, dims)
+            : await callOpenAi(cfg, prompt, mime, base64, alphabet, dims);
         log(`Połączenie z AI OK (${Date.now() - t0} ms) — rozpoznano stan gry.`);
         return result;
     } catch (e) {
@@ -222,7 +224,7 @@ async function callVisionModel(imageBuffer, mime, alphabet) {
  * @param {string} alphabet
  * @returns {Promise<{board: string[], rack: string[]}>}
  */
-async function callOpenAi(cfg, prompt, mime, base64, alphabet) {
+async function callOpenAi(cfg, prompt, mime, base64, alphabet, dims) {
     const dataUrl = `data:${mime};base64,${base64}`;
     const modelName = String(cfg.model || '').toLowerCase();
     const isReasoning = modelName.startsWith('gpt-5') || modelName.startsWith('o1') || modelName.startsWith('o3');
@@ -367,7 +369,7 @@ async function callOpenAi(cfg, prompt, mime, base64, alphabet) {
     }
 
     const parsed = extractJson(typeof content === 'string' ? content : JSON.stringify(content));
-    return normalizeAiData(parsed, alphabet);
+    return normalizeAiData(parsed, alphabet, dims);
 }
 
 /**
@@ -446,7 +448,7 @@ async function callOpenAiResponses(cfg, prompt, mime, base64) {
  * @param {string} alphabet
  * @returns {Promise<{board: string[], rack: string[]}>}
  */
-async function callGemini(cfg, prompt, mime, base64, alphabet) {
+async function callGemini(cfg, prompt, mime, base64, alphabet, dims) {
     // cfg.apiUrl to baza modeli; dołączamy {model}:generateContent.
     // Obsłuż też sytuację, gdy ktoś poda pełny URL z ':generateContent'.
     let url = cfg.apiUrl;
@@ -498,7 +500,7 @@ async function callGemini(cfg, prompt, mime, base64, alphabet) {
     }
 
     const parsed = extractJson(content);
-    return normalizeAiData(parsed, alphabet);
+    return normalizeAiData(parsed, alphabet, dims);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -506,12 +508,25 @@ async function callGemini(cfg, prompt, mime, base64, alphabet) {
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**
- * Normalizuje surowe dane od modelu do postaci { board: string[15], rack: string[] }.
+ * Tworzy błąd danych wejściowych z komunikatem przeznaczonym dla użytkownika.
+ * @param {string} message
+ * @returns {Error} Błąd oznaczony jako spodziewany (API odda go z kodem 400)
+ */
+function inputError(message) {
+    const err = new Error(message);
+    err.expected = true;
+    return err;
+}
+
+/**
+ * Normalizuje surowe dane od modelu do postaci { board: string[], rack: string[] }.
  * @param {object} data - Dane z modelu
  * @param {string} alphabet - Alfabet gry
+ * @param {{size: number, rackSize: number}} [dims] - Bok planszy i pojemność stojaka z trybu gry
  * @returns {{board: string[], rack: string[]}}
  */
-function normalizeAiData(data, alphabet) {
+function normalizeAiData(data, alphabet, dims = DEFAULT_DIMS) {
+    const { size, rackSize } = dims;
     if (!data || typeof data !== 'object') throw new Error('Model nie zwrócił obiektu.');
 
     const allowed = new Set(alphabet.toUpperCase().split(''));
@@ -521,8 +536,8 @@ function normalizeAiData(data, alphabet) {
     if (typeof rows === 'string') rows = rows.split(/\r?\n/);
     if (!Array.isArray(rows)) throw new Error('Brak pola "board" (plansza) w odpowiedzi modelu.');
     rows = rows.filter(r => typeof r === 'string');
-    if (rows.length < SIZE) throw new Error(`Plansza ma ${rows.length} wierszy, oczekiwano ${SIZE}.`);
-    rows = rows.slice(0, SIZE).map(r => normalizeRow(r, allowed));
+    if (rows.length < size) throw inputError(`Plansza ma ${rows.length} wierszy, oczekiwano ${size}.`);
+    rows = rows.slice(0, size).map(r => normalizeRow(r, allowed, size));
 
     // --- stojak ---
     let rack = data.rack || data.stojak || data.stack || [];
@@ -533,19 +548,19 @@ function normalizeAiData(data, alphabet) {
         .filter(Boolean)
         .map(x => normalizeRackLetter(x, allowed))
         .filter(Boolean)
-        .slice(0, 7);
+        .slice(0, rackSize);
 
     return { board: rows, rack };
 }
 
 /**
- * Normalizuje pojedynczy wiersz planszy do dokładnie 15 znaków.
+ * Normalizuje pojedynczy wiersz planszy do dokładnie `size` znaków.
  * Wielkie litery = zwykły żeton, małe = blank, reszta = puste pole '.'.
  * @param {string} row
  * @param {Set<string>} allowed - Dozwolone WIELKIE litery
  * @returns {string}
  */
-function normalizeRow(row, allowed) {
+function normalizeRow(row, allowed, size) {
     const chars = [];
     for (const ch of row) {
         if (ch === '.') { chars.push('.'); continue; }
@@ -557,8 +572,8 @@ function normalizeRow(row, allowed) {
             chars.push('.'); // spacje, '-', '_', nieznane znaki => puste
         }
     }
-    while (chars.length < SIZE) chars.push('.');
-    return chars.slice(0, SIZE).join('');
+    while (chars.length < size) chars.push('.');
+    return chars.slice(0, size).join('');
 }
 
 /**
@@ -578,15 +593,15 @@ function normalizeRackLetter(raw, allowed) {
 
 /**
  * Buduje instancję Board z rozpoznanej planszy.
- * @param {string[]} rows - 15 łańcuchów po 15 znaków (wiersze od góry)
+ * @param {string[]} rows - Wiersze planszy od góry, każdy długości boku planszy
  * @param {import('../variant/compile').CompiledVariant} variant - Tryb gry (punktacja pól i liter)
  * @returns {Board}
  */
 function buildBoard(rows, variant) {
     const board = new Board(variant);
-    for (let y = 0; y < SIZE; y++) {
+    for (let y = 0; y < variant.size; y++) {
         const row = rows[y];
-        for (let x = 0; x < SIZE; x++) {
+        for (let x = 0; x < variant.size; x++) {
             const ch = row[x];
             if (!ch || ch === '.') continue;
             const isBlank = ch === ch.toLowerCase() && ch !== ch.toUpperCase();
@@ -677,7 +692,9 @@ async function solveFromImage(imageBuffer, dict, opts = {}) {
     const resized = await resizeImage(imageBuffer);
     log(`Obraz przeskalowany do ${resized.width}x${resized.height} px (${resized.buffer.length} B).`);
 
-    const recognized = await callVisionModel(resized.buffer, resized.mime, alphabet);
+    const recognized = await callVisionModel(resized.buffer, resized.mime, alphabet, {
+        size: opts.variant.size, rackSize: opts.variant.rackSize,
+    });
     log(`Rozpoznany stojak: [${recognized.rack.join(' ') || '—'}]`);
 
     const board = buildBoard(recognized.board, opts.variant);

@@ -8,7 +8,7 @@
  */
 
 import { el, fill, toast, avatar, plural } from './ui.js';
-import { store, setState, setToken, subscribe, clearPlacement, pushFeed } from './store.js';
+import { store, setState, setToken, getToken, subscribe, clearPlacement, pushFeed } from './store.js';
 import { api } from './api.js';
 import { connect, onMessage, call } from './net.js';
 import { registerRoutes, startRouter, navigate, currentRoute } from './router.js';
@@ -43,7 +43,9 @@ function renderHeader() {
     const header = document.getElementById('app-header');
     if (!header) return;
 
-    const route = currentRoute();
+    // Z adresu, nie z routera: nagłówek bywa rysowany, zanim router zdąży
+    // zapisać nową trasę, i podświetlałby wtedy poprzednią pozycję menu.
+    const route = (location.hash || '#/').slice(1) || '/';
 
     fill(header,
         el('div', { class: 'header-inner' },
@@ -61,7 +63,8 @@ function renderHeader() {
             }, el('span', { class: 'nav-icon' }, item.icon), el('span', { class: 'nav-label' }, item.label)))),
 
             el('div', { class: 'header-right' },
-                store.table
+                // Na ekranie gry przycisk prowadziłby tam, gdzie już jesteśmy.
+                store.table && route !== '/gra'
                     ? el('button', {
                         class: 'btn btn-small btn-primary',
                         onclick: () => navigate('/gra'),
@@ -121,15 +124,14 @@ function handleServerMessage(msg) {
 
         // Odpowiedź na `auth` po (ponownym) połączeniu — odtwarza stan stołu.
         case 'auth:restored':
-            if (!msg.success) return;
-            setState({
-                user: msg.user,
-                table: msg.table,
-                game: msg.game,
-                tables: msg.tables || [],
-                online: msg.online || 0,
-            });
-            if (msg.table && currentRoute() === '/gra') clearPlacement();
+            if (!msg.success) {
+                // Serwer nie zna już tej sesji — udawanie zalogowanego kończyłoby
+                // się odmową przy każdej akcji.
+                if (msg.code === 'session') dropSession();
+                return;
+            }
+            setState({ user: msg.user });
+            applySnapshot(msg);
             break;
 
         case 'lobby':
@@ -142,6 +144,13 @@ function handleServerMessage(msg) {
             // na bieżącą partię przy każdym swoim ruchu.
             if (!belongsToCurrentTable(msg.table?.id, { allowFirst: true })) return;
             setState({ table: msg.table });
+            // Stół wrócił do poczekalni (rewanż z wolnym miejscem) — poprzednia
+            // partia nie ma już czego szukać na ekranie.
+            if (msg.table?.status === 'waiting' && store.game) {
+                clearPlacement();
+                clearPreviews();
+                setState({ game: null, results: null });
+            }
             break;
 
         case 'table:closed':
@@ -196,6 +205,34 @@ function handleServerMessage(msg) {
 }
 
 /**
+ * Przyjmuje pełny obraz sytuacji z serwera (po połączeniu albo powrocie do
+ * karty): stół, partię, wyniki i listę stołów.
+ * @param {object} msg - `{ table, game, tables, online }`
+ */
+function applySnapshot(msg) {
+    setState({ table: msg.table || null, tables: msg.tables || [], online: msg.online || 0 });
+
+    if (msg.table && msg.game) {
+        handleGameState(msg.game);
+    } else {
+        setState({ game: null });
+        clearPlacement();
+        clearPreviews();
+    }
+    // Partia mogła się skończyć pod naszą nieobecność — wyniki są w jej stanie.
+    setState({ results: (msg.table && msg.game?.results) || null });
+}
+
+/** Porzuca sesję, której serwer już nie uznaje. */
+function dropSession() {
+    setToken(null);
+    setState({ user: null, table: null, game: null, results: null });
+    clearPlacement();
+    clearPreviews();
+    toast('Sesja wygasła — zaloguj się ponownie.', 'error', 6000);
+}
+
+/**
  * Czy wiadomość dotyczy stołu, przy którym faktycznie siedzimy.
  *
  * Serwer pilnuje, żeby gracz był tylko przy jednym stole, ale przy przesiadce
@@ -226,11 +263,17 @@ function handleGameState(state) {
 
     setState({ game: state });
 
+    // Układanie ma sens tylko w naszej turze i na wolnych polach. Tura mogła
+    // minąć (limit czasu), a na „naszych" polach mógł stanąć ruch przeciwnika.
+    const myTurn = !state.finished && state.mySlot != null && state.currentSlot === state.mySlot;
+    const collides = store.placed.some(p => state.board?.[p.x]?.[p.y]?.letter);
+    const pending = store.placed.length > 0 || store.exchangeMode;
+
     if (newGame) {
         clearPlacement();
         clearPreviews();
         setState({ results: null });
-    } else if (rackChanged && store.placed.length) {
+    } else if (pending && (rackChanged || collides || !myTurn)) {
         clearPlacement();
     }
 }
@@ -245,7 +288,7 @@ function describeMove(msg) {
 
     const text = {
         word: () => `${move.wordSimple} za ${move.points} pkt${move.bingo ? ' 🎉 premia za stojak!' : ''}`,
-        exchange: () => `wymienia ${plural((move.letters || []).length, 'literę', 'litery', 'liter')}`,
+        exchange: () => `wymienia ${plural(move.count ?? (move.letters || []).length, 'literę', 'litery', 'liter')}`,
         pass: () => (move.timeout ? 'nie zdążył — pas' : 'pasuje'),
         invalid: () => `traci turę (nie znam słowa: ${(move.wrongWords || []).join(', ')})`,
         resign: () => 'poddaje partię',
@@ -304,8 +347,10 @@ async function boot() {
     try {
         const me = await api.get('/auth/me');
         if (me.user) setState({ user: me.user });
-    } catch {
-        setToken(null); // token wygasł albo jest nieznany
+        else setToken(null); // serwer nie zna tego tokenu
+    } catch (err) {
+        // Brak sieci albo restart serwera to nie powód, żeby wylogowywać.
+        console.warn('Nie udało się sprawdzić sesji:', err.message);
     }
 
     onMessage(handleServerMessage);
@@ -326,6 +371,15 @@ async function boot() {
 
     subscribe(['user', 'connection', 'online', 'table'], renderHeader);
     window.addEventListener('hashchange', renderHeader);
+
+    // Niezalogowany nie dostaje listy stołów po połączeniu (przychodzi dopiero
+    // z odpowiedzią na uwierzytelnienie), więc prosimy o nią sami.
+    subscribe('connection', () => {
+        if (store.connection !== 'on' || getToken()) return;
+        call('lobby').then(res => {
+            if (res.success) setState({ tables: res.tables, online: res.online });
+        }).catch(() => {});
+    });
 
     renderHeader();
     startRouter(document.getElementById('view'), '/');
@@ -355,7 +409,7 @@ async function boot() {
             if (store.connection !== 'on') return;
             call('sync').then(res => {
                 if (!res.success) return;
-                setState({ table: res.table, game: res.game, tables: res.tables, online: res.online });
+                applySnapshot(res);
             }).catch(() => {});
         }, 1200);
     });

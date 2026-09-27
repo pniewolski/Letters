@@ -105,6 +105,18 @@ class SessionRepo {
     }
 
     /**
+     * Usuwa sesje konta poza wskazaną (po zmianie hasła).
+     * @param {number} userId
+     * @param {string|null} keepToken - Sesja, która ma zostać
+     * @returns {Promise<void>}
+     */
+    async destroyOthers(userId, keepToken) {
+        await this.db.run(
+            'DELETE FROM sessions WHERE user_id = ? AND token <> ?', [userId, keepToken || ''],
+        );
+    }
+
+    /**
      * Kasuje wygasłe sesje.
      * @returns {Promise<number>} Liczba usuniętych wpisów
      */

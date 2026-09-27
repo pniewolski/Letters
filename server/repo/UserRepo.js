@@ -157,14 +157,17 @@ class UserRepo {
      */
     async updateProfile(id, data) {
         const patch = {};
-        if (data.displayName !== undefined) {
+        if (typeof data.displayName === 'string') {
             patch.display_name = UserRepo.cleanDisplayName(data.displayName, 'Gracz');
         }
         if (data.avatar !== undefined) {
-            patch.avatar = data.avatar ? String(data.avatar).slice(0, 8) : null;
+            // Tniemy po znakach, nie po jednostkach UTF-16 — inaczej emoji pęka w połowie.
+            patch.avatar = data.avatar && typeof data.avatar === 'string'
+                ? [...data.avatar.trim()].reduce((out, ch) => (out.length + ch.length <= 8 ? out + ch : out), '') || null
+                : null;
         }
         if (data.bio !== undefined) {
-            patch.bio = data.bio ? String(data.bio).replace(/\s+/g, ' ').trim().slice(0, 200) : null;
+            patch.bio = data.bio && typeof data.bio === 'string' ? data.bio.replace(/\s+/g, ' ').trim().slice(0, 200) : null;
         }
         if (Object.keys(patch).length) await this.db.update('users', patch, { id });
         return this.findById(id);

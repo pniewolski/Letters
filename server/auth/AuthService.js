@@ -144,10 +144,11 @@ class AuthService {
      * @param {number} userId
      * @param {string} oldPassword
      * @param {string} newPassword
+     * @param {string} [keepToken] - Sesja, która ma przetrwać (ta, z której zmieniamy hasło)
      * @returns {Promise<void>}
      * @throws {AuthError}
      */
-    async changePassword(userId, oldPassword, newPassword) {
+    async changePassword(userId, oldPassword, newPassword, keepToken = null) {
         const user = await this.users.findById(userId);
         if (!user || !user.password_hash) throw new AuthError('To konto nie ma hasła.');
         if (!await verifyPassword(oldPassword, user.password_hash)) {
@@ -156,7 +157,13 @@ class AuthService {
         if (String(newPassword || '').length < PASSWORD_LIMITS.min) {
             throw new AuthError(`Nowe hasło musi mieć co najmniej ${PASSWORD_LIMITS.min} znaków.`);
         }
+        if (String(newPassword).length > PASSWORD_LIMITS.max) {
+            throw new AuthError(`Nowe hasło może mieć najwyżej ${PASSWORD_LIMITS.max} znaków.`);
+        }
         await this.users.setPassword(userId, await hashPassword(newPassword));
+
+        // Zmiana hasła ma odciąć każdego, kto zdążył przejąć starą sesję.
+        await this.sessions.destroyOthers(userId, keepToken);
     }
 
     /**

@@ -186,6 +186,9 @@ async function start() {
         setTimeout(() => process.exit(0), 5000).unref();
     };
 
+    // Błąd w tle (timer, zdarzenie) nie może kłaść całego portalu.
+    process.on('unhandledRejection', err => console.error('[Serwer] Nieobsłużony błąd w tle:', err));
+
     process.on('SIGTERM', () => shutdown('SIGTERM'));
     process.on('SIGINT', () => shutdown('SIGINT'));
 }

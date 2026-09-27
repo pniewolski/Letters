@@ -169,6 +169,9 @@ function discardSocket() {
     socket.onerror = null;
     socket.onmessage = null;
     try { socket.close(); } catch { /* już zamknięte */ }
+
+    // Odpięty `onclose` już tego nie zrobi, a odpowiedzi i tak nie przyjdą.
+    rejectAllPending('Połączenie z serwerem zostało przerwane.');
 }
 
 /** Planuje kolejną próbę połączenia z rosnącą przerwą. */

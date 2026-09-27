@@ -18,6 +18,7 @@
  */
 
 const handlers = require('./handlers');
+const GameTable = require('../lobby/GameTable');
 
 /** Limit wiadomości na sekundę z jednego połączenia. */
 const RATE_LIMIT = { windowMs: 1000, max: 30 };
@@ -103,7 +104,9 @@ class Hub {
         }
 
         const { type, rid, ...payload } = msg || {};
-        const handler = handlers[type];
+        // Tylko własne klucze — inaczej `constructor` czy `toString` trafiałyby
+        // w metody odziedziczone po Object.
+        const handler = typeof type === 'string' && Object.hasOwn(handlers, type) ? handlers[type] : null;
         if (!handler) {
             this.send(ctx.ws, { type: 'error', rid, error: `Nieznana akcja: ${type}` });
             return;
@@ -126,6 +129,7 @@ class Hub {
             this.send(ctx.ws, {
                 type: `${type}:response`, rid, success: false,
                 error: err.message || 'Coś poszło nie tak po stronie serwera.',
+                code: err.expected && err.code ? err.code : undefined,
             });
         }
     }
@@ -240,13 +244,16 @@ class Hub {
     }
 
     /**
-     * Wszyscy zainteresowani stołem: gracze i widzowie.
+     * Wszyscy zainteresowani stołem: gracze i widzowie. Kto wyszedł w trakcie
+     * partii, zachowuje miejsce na potrzeby wyniku, ale stołu już nie śledzi.
      * @param {import('../lobby/GameTable')} table
      * @returns {number[]} Identyfikatory kont
      */
     audienceOf(table) {
         const ids = new Set();
-        for (const seat of table.seats) if (seat.userId != null) ids.add(seat.userId);
+        for (const seat of table.seats) {
+            if (seat.userId != null && this.deps.tables.tableOf(seat.userId) === table) ids.add(seat.userId);
+        }
         for (const id of table.spectators) ids.add(id);
         return [...ids];
     }
@@ -311,7 +318,7 @@ class Hub {
                 this.sendToUser(userId, {
                     type: 'game:move',
                     tableId: table.id,
-                    move,
+                    move: GameTable.publicMove(move),
                     playerName: seat ? seat.name : null,
                     isComputer: seat ? seat.type === 'computer' : false,
                 });

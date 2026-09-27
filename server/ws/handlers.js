@@ -19,11 +19,13 @@
 /**
  * Tworzy błąd z komunikatem przeznaczonym dla gracza.
  * @param {string} message - Treść po polsku
+ * @param {string} [code] - Kod dla klienta, gdy ma zareagować inaczej niż komunikatem
  * @returns {Error} Błąd oznaczony jako spodziewany (nie trafia do logu)
  */
-function fail(message) {
+function fail(message, code = null) {
     const err = new Error(message);
     err.expected = true;
+    if (code) err.code = code;
     return err;
 }
 
@@ -45,7 +47,7 @@ function require_(condition, message) {
  */
 async function auth(ctx, payload) {
     const session = await ctx.deps.auth.resolve(payload.token);
-    require_(session, 'Sesja wygasła — zaloguj się ponownie.');
+    if (!session) throw fail('Sesja wygasła — zaloguj się ponownie.', 'session');
 
     ctx.hub.attachUser(ctx, session.user, payload.token);
 
@@ -233,7 +235,8 @@ async function gamePreview(ctx, payload) {
     const seat = table.seatOf(ctx.user.id);
     if (!seat) return null;
 
-    const tiles = (payload.tiles || []).slice(0, 16).map(t => ({
+    const raw = Array.isArray(payload.tiles) ? payload.tiles : [];
+    const tiles = raw.filter(t => t && typeof t === 'object').slice(0, 16).map(t => ({
         x: Number(t.x), y: Number(t.y), isBlank: !!t.isBlank,
     }));
 

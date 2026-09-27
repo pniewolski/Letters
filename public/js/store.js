@@ -87,6 +87,15 @@ export function setState(patch) {
     const changed = [];
     for (const [key, value] of Object.entries(patch)) {
         if (store[key] === value) continue;
+        // Czasy w stanie partii są podane na moment wysłania przez serwer.
+        // Zapamiętujemy chwilę odbioru, żeby zegar umiał doliczyć resztę —
+        // także po wyjściu z ekranu gry i powrocie.
+        if (key === 'game' && value && value.receivedAt == null) value.receivedAt = Date.now();
+        // Log zdarzeń i czatu dotyczy jednego stołu — przy innym zaczynamy od zera.
+        if (key === 'table' && (value?.id ?? null) !== (store.table?.id ?? null)) {
+            store.feed = [];
+            changed.push('feed');
+        }
         store[key] = value;
         changed.push(key);
     }

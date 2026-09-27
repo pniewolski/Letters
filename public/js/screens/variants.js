@@ -7,7 +7,7 @@
 import { el, fill, toast, confirmDialog, plural } from '../ui.js';
 import { store } from '../store.js';
 import { api } from '../api.js';
-import { navigate } from '../router.js';
+import { navigate, refresh } from '../router.js';
 import { openAuthModal } from './auth.js';
 import { openCreateTable } from './lobby.js';
 import { miniBoard } from '../game/miniBoard.js';
@@ -35,7 +35,7 @@ export default async function variantsScreen(host) {
     const others = variants.filter(v => !v.isSystem && !v.canEdit);
 
     /** Odświeża ekran po zmianie. */
-    const reload = () => variantsScreen(host);
+    const reload = () => refresh();
 
     /**
      * Karta trybu gry.

@@ -23,6 +23,9 @@ let host = null;
 /** @type {string} Aktualna ścieżka. */
 let currentPath = '';
 
+/** @type {number} Numer bieżącego rysowania — rozpoznaje spóźnione ekrany. */
+let renderSeq = 0;
+
 /**
  * Rejestruje trasy.
  * @param {Object<string, Function>} map - Mapa wzorzec → ekran
@@ -99,6 +102,7 @@ function match(path) {
  */
 async function render(fallback = '/') {
     if (!host) return;
+    const seq = ++renderSeq;
 
     const path = (location.hash || '#' + fallback).slice(1) || fallback;
     currentPath = path;
@@ -120,12 +124,26 @@ async function render(fallback = '/') {
     document.body.dataset.route = path.split('/')[1] || 'home';
     window.scrollTo(0, 0);
 
+    // Każdy ekran rysuje we własnym elemencie. Ekran asynchroniczny, który
+    // skończy się ładować po przejściu dalej, maluje wtedy w odpiętym
+    // elemencie zamiast po następcy.
+    const stage = el('div', { class: 'route-stage' });
+    host.replaceChildren(stage);
+
     try {
-        const result = await found.screen(host, found.params);
-        cleanup = typeof result === 'function' ? result : null;
+        const result = await found.screen(stage, found.params);
+        const fn = typeof result === 'function' ? result : null;
+
+        if (seq !== renderSeq) {
+            // Spóźniony ekran: sprzątamy po nim od razu i nie ruszamy bieżącego.
+            if (fn) { try { fn(); } catch (err) { console.error('[router] Błąd sprzątania:', err); } }
+            return;
+        }
+        cleanup = fn;
     } catch (err) {
+        if (seq !== renderSeq) return;
         console.error('[router] Błąd ekranu:', err);
-        fill(host, el('div', { class: 'card empty-state' },
+        fill(stage, el('div', { class: 'card empty-state' },
             el('h2', {}, 'Coś się posypało'),
             el('p', { class: 'muted' }, err.message),
         ));

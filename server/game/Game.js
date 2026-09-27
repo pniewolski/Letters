@@ -315,7 +315,19 @@ class Game {
 
         // ── Pola muszą być w planszy, puste i niepowtórzone ──────────────────
         const occupied = new Set();
-        for (const t of tiles) {
+        for (const [i, raw] of tiles.entries()) {
+            if (!raw || typeof raw !== 'object') {
+                return { success: false, error: 'Niepoprawny opis klocka.' };
+            }
+            // Klocek to dokładnie jedna litera z alfabetu trybu. Dłuższy napis
+            // dopisałby do słowa litery, których nikt nie położył na planszy.
+            const letter = String(raw.letter ?? '').toUpperCase();
+            if ([...letter].length !== 1 || !this.variant.alphabet.includes(letter)) {
+                return { success: false, error: 'Niepoprawna litera na klocku.' };
+            }
+            const t = { letter, x: raw.x, y: raw.y, isBlank: !!raw.isBlank };
+            tiles[i] = t;
+
             if (!Number.isInteger(t.x) || !Number.isInteger(t.y)
                 || t.x < 0 || t.y < 0 || t.x >= size || t.y >= size) {
                 return { success: false, error: 'Litera poza planszą.' };

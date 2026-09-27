@@ -203,6 +203,7 @@ export default async function lobbyScreen(host) {
                     { label: 'Anuluj', onClick: () => resolve(null) },
                     { label: 'Dołącz', kind: 'primary', onClick: () => resolve(input.value) },
                 ],
+                onClose: () => resolve(null),
             });
         });
     }

@@ -200,6 +200,18 @@ Po stronie serwera `TableManager` daje graczowi **90 sekund na powrót**, zanim
 zwolni jego miejsce przy stole, który jeszcze nie wystartował. W trakcie partii
 miejsce zostaje na stałe, ale gracz nieobecny dłużej niż 150 sekund dostaje
 automatyczny pas — inaczej jedna zerwana sesja blokowałaby stół w nieskończoność.
+Pas pada tylko wtedy, gdy na ruch czeka inny człowiek: w grze z komputerem
+partia stoi do powrotu gracza, a stół bez nikogo podłączonego jest zamykany
+dopiero po **10 minutach**.
+
+### Pomiar czasu
+
+Stan partii niesie czasy liczone przez serwer na moment wysłania:
+`timeLeftMs` (ile zostało na ruch; `null` bez limitu i w turze komputera),
+`turnElapsedMs` (ile trwa tura), `gameElapsedMs` (ile trwa partia) oraz
+`players[].timeUsedMs` (łączny czas namysłu gracza). Front zapamiętuje chwilę
+odbioru stanu (`receivedAt`) i dolicza resztę sam — pasek nad planszą pokazuje
+odliczanie albo, przy stole bez limitu, czas bieżącego ruchu.
 
 ## Konta i goście
 

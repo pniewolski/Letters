@@ -378,6 +378,8 @@ textarea { resize: vertical; }
     align-items: start;
 }
 .panel-left, .panel-right { display: flex; flex-direction: column; gap: 10px; }
+/* Opakowania bez własnego układu — ich dzieci układa rodzic. */
+.side-panel, .route-stage { display: contents; }
 .board-area { display: flex; flex-direction: column; align-items: center; gap: 12px; }
 .board-host { display: flex; justify-content: center; }
 .board-placeholder { padding: 60px 20px; text-align: center; color: var(--muted); }
@@ -388,12 +390,36 @@ textarea { resize: vertical; }
 .meta-item { display: flex; justify-content: space-between; gap: 8px; }
 .meta-label { color: var(--muted); }
 .meta-value { font-variant-numeric: tabular-nums; }
-.turn-banner {
-    margin-top: 10px; padding: 7px 10px; border-radius: var(--radius-sm);
-    background: var(--surface-2); text-align: center; font-size: .9rem;
+
+/* Pasek tury z zegarem — nad planszą, żeby był widoczny także na telefonie */
+.turn-clock {
+    position: relative; overflow: hidden;
+    display: flex; align-items: center; justify-content: space-between; gap: 12px;
+    width: 100%; max-width: calc(var(--board-size) + var(--cell-size));
+    padding: 8px 14px; border-radius: var(--radius-sm);
+    background: var(--surface); border: 1px solid var(--border);
 }
-.turn-banner.my-turn { background: rgba(63, 191, 127, .18); color: #9fe6c2; font-weight: 600; }
-.turn-banner.finished { background: rgba(240, 183, 63, .16); color: var(--gold); }
+.turn-clock[hidden] { display: none; }
+.turn-clock-who { display: flex; flex-direction: column; min-width: 0; font-size: .98rem; line-height: 1.25; }
+.turn-clock-game { color: var(--muted); font-size: .76rem; font-weight: 400; font-variant-numeric: tabular-nums; }
+.turn-clock-scores { display: flex; flex-wrap: wrap; justify-content: center; gap: 4px 12px; min-width: 0; font-size: .85rem; }
+.turn-clock-score { display: inline-flex; align-items: baseline; gap: 5px; color: var(--muted); }
+.turn-clock-score strong { color: var(--gold); font-variant-numeric: tabular-nums; }
+.turn-clock-score.active { color: var(--text); }
+.turn-clock-score.resigned { opacity: .5; text-decoration: line-through; }
+.turn-clock-score-name { max-width: 9em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.turn-clock-time { display: flex; align-items: baseline; gap: 8px; white-space: nowrap; }
+.turn-clock-label { color: var(--muted); font-size: .76rem; }
+.turn-clock-value { font-size: 1.7rem; font-weight: 700; line-height: 1; font-variant-numeric: tabular-nums; }
+.turn-clock-bar { position: absolute; left: 0; right: 0; bottom: 0; height: 3px; background: var(--surface-2); }
+.turn-clock-fill { height: 100%; width: 100%; background: var(--primary-hi); transition: width .25s linear; }
+.turn-clock.my-turn { background: rgba(63, 191, 127, .14); border-color: rgba(63, 191, 127, .5); }
+.turn-clock.my-turn .turn-clock-who { color: #9fe6c2; font-weight: 600; }
+.turn-clock.my-turn .turn-clock-fill { background: var(--green); }
+.turn-clock.low .turn-clock-value { color: var(--red); }
+.turn-clock.low .turn-clock-fill { background: var(--red); }
+.turn-clock.finished { background: rgba(240, 183, 63, .12); border-color: rgba(240, 183, 63, .4); }
+.turn-clock.finished .turn-clock-who { color: var(--gold); font-weight: 600; }
 
 .players-panel { display: flex; flex-direction: column; gap: 4px; }
 .player-row {
@@ -408,8 +434,7 @@ textarea { resize: vertical; }
 .player-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: .92rem; }
 .player-sub { font-size: .76rem; }
 .player-score { font-size: 1.2rem; font-weight: 700; color: var(--gold); font-variant-numeric: tabular-nums; }
-.clock { text-align: center; margin-top: 8px; font-size: 1.1rem; color: var(--muted); font-variant-numeric: tabular-nums; }
-.clock.clock-low { color: var(--red); font-weight: 700; }
+.player-time { font-variant-numeric: tabular-nums; }
 
 .chat-card { flex: 1; display: flex; flex-direction: column; padding: 0; overflow: hidden; min-height: 220px; }
 .feed { flex: 1; overflow-y: auto; padding: 10px 12px; font-size: .85rem; display: flex; flex-direction: column; gap: 3px; max-height: 42vh; }
@@ -667,21 +692,22 @@ textarea { resize: vertical; }
 @media (max-width: 900px) {
     .two-cols { grid-template-columns: 1fr; }
     .game-screen { grid-template-columns: 1fr; }
-    .panel-left { flex-direction: row; flex-wrap: wrap; }
+    /* Jedna kolumna: najpierw plansza, potem wyniki i podpowiedzi, na końcu czat. */
+    .board-area { order: -1; }
+    .panel-right { order: 1; }
+    .panel-left { order: 2; flex-direction: row; flex-wrap: wrap; }
     .panel-left > * { flex: 1 1 240px; }
     .nav-label { display: none; }
     .nav-icon { font-size: 1.2rem; }
-    :root { --board-size: min(80vh, 92vw); }
+    :root { --board-size: min(80vh, calc((100vw - 46px) / (var(--board-cells) + 0.9) * var(--board-cells))); }
 }
 
 @media (max-width: 640px) {
     .header-inner { flex-wrap: wrap; gap: 10px; padding: 8px 12px; }
     .main-nav { order: 3; width: 100%; justify-content: space-around; }
     .app-view { padding: 12px 10px 30px; }
-    .board-area { order: -1; }
     .game-screen { display: flex; flex-direction: column; }
-    .panel-left { order: 2; flex-direction: column; }
-    .panel-right { order: 1; }
+    .panel-left { flex-direction: column; }
     .hero { padding: 24px 8px 4px; }
     .hero-stats { gap: 16px; }
     .table-list, .variant-grid { grid-template-columns: 1fr; }
@@ -690,6 +716,8 @@ textarea { resize: vertical; }
     .rack { flex-wrap: wrap; }
     .btn { padding: 10px 14px; }
     .toasts { left: 12px; right: 12px; bottom: 12px; max-width: none; }
-    :root { --board-size: 94vw; }
+    /* Szerokość ekranu minus marginesy widoku, ramka i odstępy planszy oraz
+       kolumna etykiet wierszy — inaczej plansza wystaje poza ekran. */
+    :root { --board-size: calc((100vw - 46px) / (var(--board-cells) + 0.9) * var(--board-cells)); }
     .coord-label { font-size: calc(var(--cell-size) * .3); }
 }

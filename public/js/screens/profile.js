@@ -39,6 +39,14 @@ export default async function profileScreen(host, params = {}) {
         return () => {};
     }
 
+    if (!data.user) {
+        fill(host, el('div', { class: 'card empty-state' },
+            el('h2', {}, 'Nie jesteś zalogowany'),
+            el('p', { class: 'muted' }, 'Sesja wygasła albo została zakończona w innej karcie.'),
+            el('button', { class: 'btn btn-primary', onclick: () => openAuthModal('login') }, 'Zaloguj')));
+        return () => {};
+    }
+
     const { user, stats, scalps, recent } = data;
 
     fill(host,

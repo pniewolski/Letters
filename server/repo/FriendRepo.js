@@ -14,6 +14,17 @@
 /** Dozwolone stany relacji. */
 const STATUS = { PENDING: 'pending', INCOMING: 'incoming', ACCEPTED: 'accepted' };
 
+/**
+ * Tworzy błąd z komunikatem przeznaczonym dla gracza.
+ * @param {string} message - Treść po polsku
+ * @returns {Error} Błąd oznaczony jako spodziewany (API odda go z kodem 400)
+ */
+function friendError(message) {
+    const err = new Error(message);
+    err.expected = true;
+    return err;
+}
+
 class FriendRepo {
     /**
      * @param {import('../db/Database')} db - Połączenie z bazą
@@ -30,11 +41,12 @@ class FriendRepo {
      * @throws {Error} Gdy gracz zaprasza sam siebie albo konto nie istnieje
      */
     async invite(userId, friendId) {
-        if (userId === friendId) throw new Error('Nie możesz zaprosić samego siebie.');
+        if (!Number.isInteger(friendId)) throw friendError('Nie znaleziono takiego gracza.');
+        if (userId === friendId) throw friendError('Nie możesz zaprosić samego siebie.');
 
         const target = await this.db.get('SELECT id, is_guest FROM users WHERE id = ?', [friendId]);
-        if (!target) throw new Error('Nie znaleziono takiego gracza.');
-        if (target.is_guest) throw new Error('Nie można dodać gościa do znajomych — najpierw musi założyć konto.');
+        if (!target) throw friendError('Nie znaleziono takiego gracza.');
+        if (target.is_guest) throw friendError('Nie można dodać gościa do znajomych — najpierw musi założyć konto.');
 
         const existing = await this.db.get(
             'SELECT status FROM friends WHERE user_id = ? AND friend_id = ?', [userId, friendId],
@@ -56,19 +68,24 @@ class FriendRepo {
     }
 
     /**
-     * Przyjmuje zaproszenie.
+     * Przyjmuje zaproszenie. Przyjąć można tylko to, co faktycznie przyszło —
+     * bez tego każdy mógłby wpisać się komuś do znajomych samą akceptacją.
      * @param {number} userId - Kto przyjmuje
      * @param {number} friendId - Od kogo było zaproszenie
      * @returns {Promise<{status: string}>}
+     * @throws {Error} Gdy nie ma zaproszenia od tego gracza
      */
     async accept(userId, friendId) {
-        const now = Date.now();
-        await this.db.upsert('friends', ['user_id', 'friend_id'],
-            { user_id: userId, friend_id: friendId, status: STATUS.ACCEPTED, created_at: now },
-            { status: STATUS.ACCEPTED });
-        await this.db.upsert('friends', ['user_id', 'friend_id'],
-            { user_id: friendId, friend_id: userId, status: STATUS.ACCEPTED, created_at: now },
-            { status: STATUS.ACCEPTED });
+        const existing = Number.isInteger(friendId)
+            ? await this.db.get(
+                'SELECT status FROM friends WHERE user_id = ? AND friend_id = ?', [userId, friendId],
+            )
+            : null;
+        if (existing?.status === STATUS.ACCEPTED) return { status: STATUS.ACCEPTED };
+        if (existing?.status !== STATUS.INCOMING) throw friendError('Nie masz zaproszenia od tego gracza.');
+
+        await this.db.update('friends', { status: STATUS.ACCEPTED }, { user_id: userId, friend_id: friendId });
+        await this.db.update('friends', { status: STATUS.ACCEPTED }, { user_id: friendId, friend_id: userId });
         return { status: STATUS.ACCEPTED };
     }
 

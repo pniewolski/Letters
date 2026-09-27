@@ -89,6 +89,8 @@ export function buildBoard(container) {
     const wrap = el('div', { class: 'board-wrap' },
         el('div', { class: 'board-corner' }), cols, rows, boardEl);
     wrap.style.setProperty('--board-cells', String(size));
+    // Także na korzeniu: od liczby pól zależy rozmiar planszy liczony w CSS.
+    document.documentElement.style.setProperty('--board-cells', String(size));
 
     container.replaceChildren(wrap);
     return boardEl;
@@ -378,7 +380,10 @@ function onCellTap(x, y) {
 function dropFromRack(source, x, y) {
     const blankSymbol = store.game.variant.blankSymbol;
     if (source.letter === blankSymbol) {
-        showBlankModal(chosen => placeTile(source.rackIndex, chosen, x, y, true));
+        showBlankModal(chosen => {
+            // Zanim gracz wybrał literę, tura mogła minąć albo pole się zająć.
+            if (canPlay() && isCellFree(x, y)) placeTile(source.rackIndex, chosen, x, y, true);
+        });
     } else {
         placeTile(source.rackIndex, source.letter, x, y, false);
     }

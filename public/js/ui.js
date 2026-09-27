@@ -116,12 +116,17 @@ export function toast(message, kind = 'info', ms = 3600) {
  * @param {Node|string} options.body - Treść
  * @param {Array<{label: string, kind?: string, onClick?: Function, close?: boolean}>} [options.actions] - Przyciski
  * @param {boolean} [options.dismissable=true] - Czy można zamknąć klikiem w tło i Escape
+ * @param {Function} [options.onClose] - Wywoływane raz, gdy okno znika — niezależnie od sposobu
  * @returns {{close: () => void, root: HTMLElement}}
  */
-export function modal({ title, body, actions = [], dismissable = true }) {
+export function modal({ title, body, actions = [], dismissable = true, onClose = null }) {
+    let closed = false;
     const close = () => {
+        if (closed) return;
+        closed = true;
         root.remove();
         document.removeEventListener('keydown', onKey);
+        if (onClose) onClose();
     };
 
     const onKey = (e) => { if (dismissable && e.key === 'Escape') close(); };
@@ -170,6 +175,8 @@ export function confirmDialog(question, { title = 'Potwierdź', confirmLabel = '
                 { label: 'Anuluj', onClick: () => resolve(false) },
                 { label: confirmLabel, kind: 'primary', onClick: () => resolve(true) },
             ],
+            // Escape i klik w tło znaczą „nie" — bez tego pytający czekałby wiecznie.
+            onClose: () => resolve(false),
         });
     });
 }

@@ -79,6 +79,10 @@ class GameTable {
         this.gameId = null;
         /** @type {number|null} Kiedy zaczęła się bieżąca tura. */
         this.turnStartedAt = null;
+        /** @type {number|null} Miejsce, któremu biegnie czas bieżącej tury. */
+        this.turnSlot = null;
+        /** @type {number[]} Łączny czas namysłu każdego miejsca w tej partii (ms). */
+        this.timeUsed = this.seats.map(() => 0);
         /** @type {Array<object>} Wyniki po zakończeniu partii. */
         this.results = null;
     }
@@ -197,15 +201,27 @@ class GameTable {
             seat.connected = false;
             if (this.game) this.game.resign(seat.slot);
         } else {
-            seat.type = 'open';
-            seat.userId = null;
-            seat.name = null;
-            seat.avatar = null;
-            seat.isGuest = false;
-            seat.connected = false;
+            this.releaseSeat(seat.slot);
         }
         this.touch();
         return { left: true, wasPlayer: true };
+    }
+
+    /**
+     * Zwalnia miejsce — robi z niego wolne krzesło.
+     * @param {number} slot
+     */
+    releaseSeat(slot) {
+        const seat = this.seats[slot];
+        if (!seat) return;
+        seat.type = 'open';
+        seat.userId = null;
+        seat.name = null;
+        seat.avatar = null;
+        seat.isGuest = false;
+        seat.connected = false;
+        seat.resigned = false;
+        this.touch();
     }
 
     /**
@@ -256,6 +272,8 @@ class GameTable {
         });
         this.status = STATUS.PLAYING;
         this.results = null;
+        this.timeUsed = this.seats.map(() => 0);
+        this.turnSlot = this.game.currentPlayer();
         this.turnStartedAt = Date.now();
         this.touch();
         return { success: true };
@@ -271,17 +289,46 @@ class GameTable {
     }
 
     /**
-     * Ile milisekund zostało graczowi na bieżący ruch.
-     * @returns {number|null} `null`, gdy stół nie ma limitu czasu
+     * Ile milisekund zostało graczowi na bieżący ruch. Limit dotyczy tylko
+     * ludzi — komputer rusza się sam, więc w jego turze zegar nie odlicza.
+     * @returns {number|null} `null`, gdy stół nie ma limitu czasu albo rusza się komputer
      */
     timeLeftMs() {
         if (!this.turnSeconds || !this.turnStartedAt || this.status !== STATUS.PLAYING) return null;
+        if (this.isComputerTurn()) return null;
         return Math.max(0, this.turnSeconds * 1000 - (Date.now() - this.turnStartedAt));
     }
 
-    /** Odnotowuje początek nowej tury (zerowanie zegara). */
+    /**
+     * Ile milisekund trwa już bieżąca tura.
+     * @returns {number|null} `null`, gdy partia nie trwa
+     */
+    turnElapsedMs() {
+        if (!this.turnStartedAt || this.status !== STATUS.PLAYING) return null;
+        return Math.max(0, Date.now() - this.turnStartedAt);
+    }
+
+    /**
+     * Odnotowuje początek nowej tury: dopisuje zużyty czas poprzedniemu
+     * graczowi i zeruje zegar. Jeśli tura nie zmieniła właściciela (np. ktoś
+     * poddał partię poza swoją kolejką), zegar biegnie dalej.
+     */
     markTurnStart() {
+        const current = this.game && !this.game.finished ? this.game.currentPlayer() : null;
+        if (current === this.turnSlot && this.turnStartedAt) return;
+
+        this._settleTurnTime();
+        this.turnSlot = current;
         this.turnStartedAt = Date.now();
+    }
+
+    /**
+     * Dopisuje czas trwającej tury do konta gracza, któremu biegł zegar.
+     * @private
+     */
+    _settleTurnTime() {
+        if (this.turnSlot == null || !this.turnStartedAt) return;
+        this.timeUsed[this.turnSlot] += Math.max(0, Date.now() - this.turnStartedAt);
     }
 
     /**
@@ -294,7 +341,9 @@ class GameTable {
         if (!this.game.finished) this.game.finish(reason || 'abandoned');
 
         this.status = STATUS.FINISHED;
+        this._settleTurnTime();
         this.turnStartedAt = null;
+        this.turnSlot = null;
         this.results = this.game.results().map(r => {
             const seat = this.seats[r.slot];
             const highlights = this.game.playerHighlights(r.slot);
@@ -320,6 +369,8 @@ class GameTable {
         this.results = null;
         this.status = STATUS.WAITING;
         this.turnStartedAt = null;
+        this.turnSlot = null;
+        this.timeUsed = this.seats.map(() => 0);
         for (const seat of this.seats) seat.resigned = false;
         this.touch();
     }
@@ -327,6 +378,19 @@ class GameTable {
     // ─────────────────────────────────────────────────────────────────────────
     // WIDOKI
     // ─────────────────────────────────────────────────────────────────────────
+
+    /**
+     * Ruch w postaci, którą wolno pokazać całemu stołowi. Przy wymianie
+     * zostaje sama liczba klocków — to, które litery wróciły do worka,
+     * jest wiedzą wyłącznie wymieniającego.
+     * @param {object} move - Wpis z logu partii
+     * @returns {object}
+     */
+    static publicMove(move) {
+        if (!move || move.type !== 'exchange') return move;
+        const { letters, ...rest } = move;
+        return { ...rest, count: (letters || []).length };
+    }
 
     /**
      * Karta stołu na liście w lobby.
@@ -412,7 +476,10 @@ class GameTable {
             mySlot,
             myRack: mySlot != null ? [...table.stack[mySlot]] : null,
             turnSeconds: this.turnSeconds,
+            // Czasy są podane na moment wysłania — klient dolicza resztę sam.
             timeLeftMs: this.timeLeftMs(),
+            turnElapsedMs: this.turnElapsedMs(),
+            gameElapsedMs: (this.game.finishedAt || Date.now()) - this.game.startedAt,
             players: this.seats.map(s => ({
                 slot: s.slot,
                 userId: s.userId,
@@ -423,10 +490,11 @@ class GameTable {
                 connected: s.connected,
                 resigned: this.game.resigned.has(s.slot),
                 score: table.points[s.slot],
+                timeUsedMs: this.timeUsed[s.slot],
                 rackSize: table.stack[s.slot].length,
                 rack: revealAll ? [...table.stack[s.slot]] : null,
             })),
-            moves: this.game.moves.slice(-40),
+            moves: this.game.moves.slice(-40).map(GameTable.publicMove),
             endgame: this.game.endgame || null,
             results: this.results,
         };

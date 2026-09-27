@@ -9,7 +9,7 @@
  */
 
 import { el, fill, toast, confirmDialog, fmtTime, avatar, plural } from '../ui.js';
-import { store, subscribe, canPlay, clearPlacement, touch } from '../store.js';
+import { store, subscribe, setState, canPlay, clearPlacement, touch } from '../store.js';
 import { call } from '../net.js';
 import { navigate, refresh } from '../router.js';
 import { buildBoard, renderBoard, bindPlacedTaps, recallAll, coordLabel, resetBoard } from '../game/board.js';
@@ -52,6 +52,7 @@ export default function gameScreen(host) {
     const actionsEl = el('div', { class: 'actions' });
     const playersEl = el('div', { class: 'players-panel' });
     const metaEl = el('div', { class: 'game-meta' });
+    const clockEl = el('div', { class: 'turn-clock', hidden: true });
     const feedEl = el('div', { class: 'feed' });
     const sideEl = el('div', { class: 'side-panel' });
 
@@ -81,6 +82,7 @@ export default function gameScreen(host) {
                 ),
             ),
             el('main', { class: 'board-area' },
+                clockEl,
                 boardHost,
                 el('div', { class: 'rack-area' },
                     rackEl,
@@ -101,6 +103,9 @@ export default function gameScreen(host) {
     // AKCJE
     // ─────────────────────────────────────────────────────────────────────────
 
+    /** @type {Set<string>} Akcje czekające na odpowiedź serwera. */
+    const busy = new Set();
+
     /**
      * Wykonuje akcję serwera i pokazuje błąd, jeśli się nie uda.
      * @param {string} action - Nazwa akcji WebSocket
@@ -108,6 +113,10 @@ export default function gameScreen(host) {
      * @returns {Promise<object|null>}
      */
     async function act(action, payload = {}) {
+        // Dwuklik albo Enter razem z kliknięciem wysłałby ruch dwa razy —
+        // drugi wróciłby z błędem mimo udanego pierwszego.
+        if (busy.has(action)) return null;
+        busy.add(action);
         try {
             const res = await call(action, payload);
             if (!res.success) { toast(res.error, 'error'); return null; }
@@ -115,7 +124,22 @@ export default function gameScreen(host) {
         } catch (err) {
             toast(err.message, 'error');
             return null;
+        } finally {
+            busy.delete(action);
         }
+    }
+
+    /**
+     * Akcja zmieniająca stan stołu (start, rewanż) — przyjmuje to, co odesłał
+     * serwer. Rewanż z wolnym miejscem nie ma jeszcze partii, więc bez tego
+     * na ekranie zostałaby poprzednia.
+     * @param {string} action - Nazwa akcji WebSocket
+     */
+    async function applyTable(action) {
+        const res = await act(action);
+        if (!res) return;
+        clearPlacement();
+        setState({ table: res.table, game: res.game, results: res.game?.results || null });
     }
 
     async function confirmMove() {
@@ -187,8 +211,13 @@ export default function gameScreen(host) {
             : 'Wstać od stołu?';
         if (!await confirmDialog(question)) return;
 
-        await act('table:leave');
+        const res = await act('table:leave');
+        if (!res) return;
+
+        // Serwer nie ma już komu wysłać zamknięcia stołu, więc sprzątamy sami.
         clearPlacement();
+        clearPreviews();
+        setState({ table: null, game: null, results: null, tables: res.tables || store.tables });
         navigate('/lobby');
     }
 
@@ -202,9 +231,7 @@ export default function gameScreen(host) {
         const game = store.game;
         if (!table) return;
 
-        const turnName = game && !game.finished && game.currentSlot != null
-            ? (game.players[game.currentSlot]?.name || '—')
-            : null;
+        const lastMove = game && game.moves.length ? game.moves[game.moves.length - 1] : null;
 
         fill(metaEl,
             el('div', { class: 'meta-head' },
@@ -216,24 +243,119 @@ export default function gameScreen(host) {
                 metaItem('Worek', game ? String(game.bagSize) : '—'),
                 metaItem('Ranking', table.rated ? 'tak' : 'nie'),
                 metaItem('Plansza', `${table.variant.size}×${table.variant.size}`),
+                metaItem('Czas na ruch', table.turnSeconds ? fmtTime(table.turnSeconds) : 'bez limitu'),
+                metaItem('Ruch nr', game ? String((lastMove ? lastMove.n : 0) + (game.finished ? 0 : 1)) : '—'),
             ),
-            game && !game.finished
-                ? el('div', { class: 'turn-banner ' + (game.currentSlot === game.mySlot ? 'my-turn' : '') },
-                    game.mySlot == null
-                        ? `Tura: ${turnName}`
-                        : (game.currentSlot === game.mySlot ? 'Twoja kolej' : `Czeka: ${turnName}`))
-                : null,
-            game && game.finished
-                ? el('div', { class: 'turn-banner finished' }, 'Koniec partii')
+        );
+    }
+
+    /**
+     * Pasek nad planszą: czyja tura i zegar. Leży przy planszy, a nie w panelu
+     * bocznym, żeby na telefonie był widoczny bez przewijania.
+     *
+     * Przy stole z limitem zegar odlicza czas do końca ruchu; bez limitu
+     * pokazuje, ile tura już trwa. Rysujemy tu tylko szkielet — liczby
+     * wpisuje `tickClock()`.
+     */
+    function renderClock() {
+        const game = store.game;
+        clockEl.hidden = !game;
+        if (!game) return;
+
+        if (game.finished) {
+            clockEl.className = 'turn-clock finished';
+            fill(clockEl,
+                el('div', { class: 'turn-clock-who' }, 'Koniec partii'),
+                scoreStrip(game),
+                el('div', { class: 'turn-clock-time' },
+                    el('span', { class: 'turn-clock-label' }, 'czas partii'),
+                    el('span', { class: 'turn-clock-value' }, fmtTime(game.gameElapsedMs / 1000))),
+            );
+            return;
+        }
+
+        const current = game.players[game.currentSlot];
+        const mine = game.mySlot != null && game.currentSlot === game.mySlot;
+        const limited = game.timeLeftMs != null;
+
+        const who = mine
+            ? 'Twoja kolej'
+            : current?.isComputer
+                ? `${current.name} układa…`
+                : `Ruch: ${current?.name || '—'}`;
+
+        clockEl.className = `turn-clock ${mine ? 'my-turn' : ''}`;
+        fill(clockEl,
+            el('div', { class: 'turn-clock-who' },
+                who,
+                el('span', { class: 'turn-clock-game', title: 'Czas trwania partii' },
+                    'partia ', el('span', { id: 'clock-game' }))),
+            scoreStrip(game),
+            el('div', { class: 'turn-clock-time' },
+                el('span', { class: 'turn-clock-label' }, limited ? 'zostało' : 'czas ruchu'),
+                el('span', { class: 'turn-clock-value', id: 'clock-value' })),
+            limited
+                ? el('div', { class: 'turn-clock-bar' }, el('div', { class: 'turn-clock-fill', id: 'clock-fill' }))
                 : null,
         );
+    }
+
+    /**
+     * Wyniki graczy w jednym wierszu paska tury.
+     * @param {object} game - Stan partii
+     * @returns {HTMLElement}
+     */
+    function scoreStrip(game) {
+        return el('div', { class: 'turn-clock-scores' }, game.players.map(p => el('span', {
+            class: `turn-clock-score ${p.slot === game.currentSlot ? 'active' : ''} ${p.resigned ? 'resigned' : ''}`,
+        },
+            el('span', { class: 'turn-clock-score-name' }, p.slot === game.mySlot ? 'Ty' : p.name),
+            el('strong', {}, String(p.score)),
+        )));
+    }
+
+    /** Wpisuje bieżące czasy w pasek zegara i wiersze graczy. */
+    function tickClock() {
+        const game = store.game;
+        if (!game || game.finished) return;
+
+        // Serwer podał czasy na moment wysłania stanu — doliczamy to, co
+        // upłynęło od jego odbioru.
+        const since = Math.max(0, Date.now() - (game.receivedAt || Date.now()));
+        const turnElapsed = (game.turnElapsedMs || 0) + since;
+
+        const value = document.getElementById('clock-value');
+        if (value) {
+            if (game.timeLeftMs != null) {
+                const left = Math.max(0, game.timeLeftMs - since);
+                const limit = game.turnSeconds * 1000;
+                // W górę, żeby 0:00 pojawiało się dopiero, gdy czas naprawdę minął.
+                value.textContent = fmtTime(Math.ceil(left / 1000));
+                clockEl.classList.toggle('low', left <= Math.min(15000, limit / 3));
+
+                const bar = document.getElementById('clock-fill');
+                if (bar) bar.style.width = `${Math.min(100, (left / limit) * 100)}%`;
+            } else {
+                value.textContent = fmtTime(turnElapsed / 1000);
+            }
+        }
+
+        const total = document.getElementById('clock-game');
+        if (total) total.textContent = fmtTime((game.gameElapsedMs + since) / 1000);
+
+        for (const node of playersEl.querySelectorAll('[data-time-slot]')) {
+            const player = game.players[Number(node.dataset.timeSlot)];
+            if (!player) continue;
+            const running = player.slot === game.currentSlot ? turnElapsed : 0;
+            node.textContent = fmtTime(((player.timeUsedMs || 0) + running) / 1000);
+        }
     }
 
     const metaItem = (label, value) => el('div', { class: 'meta-item' },
         el('span', { class: 'meta-label' }, label),
         el('span', { class: 'meta-value' }, value));
 
-    /** Lista graczy z wynikami i zegarem. */
+    /** Lista graczy z wynikami i łącznym czasem namysłu. */
     function renderPlayers() {
         const game = store.game;
         const table = store.table;
@@ -253,20 +375,22 @@ export default function gameScreen(host) {
                         el('div', { class: 'player-name' },
                             p.name || el('span', { class: 'muted' }, 'wolne miejsce'),
                             isMe ? el('span', { class: 'tag' }, 'ty') : null,
-                            p.isComputer ? el('span', { class: 'tag tag-bot' }, 'bot') : null,
+                            p.isComputer || p.type === 'computer' ? el('span', { class: 'tag tag-bot' }, 'bot') : null,
                             p.isGuest ? el('span', { class: 'tag tag-guest' }, 'gość') : null,
                         ),
                         el('div', { class: 'player-sub muted small' },
                             game ? `${plural(p.rackSize ?? 0, 'litera', 'litery', 'liter')} na stojaku` : 'czeka',
-                            p.connected === false && !p.isComputer ? ' · rozłączony' : '',
+                            p.connected === false && !p.isComputer && p.type !== 'open' && p.name ? ' · rozłączony' : '',
+                            game
+                                ? el('span', { class: 'player-time', title: 'Łączny czas namysłu w tej partii' },
+                                    ' · ⏱ ',
+                                    el('span', { 'data-time-slot': String(p.slot) }, fmtTime((p.timeUsedMs || 0) / 1000)))
+                                : null,
                         ),
                     ),
                     el('div', { class: 'player-score' }, game ? String(p.score) : '—'),
                 );
             }),
-            game && game.timeLeftMs != null
-                ? el('div', { class: 'clock' }, '⏱ ', el('span', { id: 'clock-value' }, fmtTime(game.timeLeftMs / 1000)))
-                : null,
         );
     }
 
@@ -289,7 +413,7 @@ export default function gameScreen(host) {
                 finished && !spectator
                     ? el('button', {
                         class: 'btn btn-primary',
-                        onclick: () => act('table:rematch'),
+                        onclick: () => applyTable('table:rematch'),
                     }, '🔁 Rewanż')
                     : null,
                 el('button', { class: 'btn btn-ghost', onclick: doLeave }, '⏏ Wstań od stołu'),
@@ -365,7 +489,7 @@ export default function gameScreen(host) {
             table.isOwner && open > 0
                 ? el('button', {
                     class: 'btn btn-primary full',
-                    onclick: () => act('table:start'),
+                    onclick: () => applyTable('table:start'),
                 }, `Zacznij teraz (wolne miejsca zajmie komputer)`)
                 : null,
         );
@@ -386,8 +510,10 @@ export default function gameScreen(host) {
                 ? el('p', { class: 'muted small' }, 'Brak możliwych ruchów.')
                 : el('ul', { class: 'hint-list' }, list.map(h => el('li', {
                     class: 'hint-item',
-                    onmouseenter: () => { store.hints.highlight = h.tiles; touch('hints'); },
-                    onmouseleave: () => { store.hints.highlight = null; touch('hints'); },
+                    // Osobny klucz: podświetlenie nie może przebudowywać listy,
+                    // na której stoi kursor — kliknięcie przestawałoby trafiać.
+                    onmouseenter: () => { store.hints.highlight = h.tiles; touch('hintHighlight'); },
+                    onmouseleave: () => { store.hints.highlight = null; touch('hintHighlight'); },
                     onclick: () => applyHint(h),
                 },
                     el('span', { class: 'hint-pts' }, String(h.points)),
@@ -403,6 +529,7 @@ export default function gameScreen(host) {
      * @param {object} hint
      */
     function applyHint(hint) {
+        if (!canPlay()) { toast('Poczekaj na swoją kolej.', 'info'); return; }
         recallAll();
         const rack = store.game.myRack;
         const usedIndices = new Set();
@@ -481,6 +608,8 @@ export default function gameScreen(host) {
 
         renderMeta();
         renderPlayers();
+        renderClock();
+        tickClock();
         renderActions();
         renderSide();
 
@@ -510,28 +639,18 @@ export default function gameScreen(host) {
             renderActions();
             renderSide();
         }),
+        subscribe('hintHighlight', () => { renderBoard(); bindPlacedTaps(); }),
         subscribe(['exchangeMode', 'rackOrder'], () => { renderRack(rackEl); renderActions(); }),
         subscribe('feed', renderFeed),
     ];
 
-    // Zegar odliczający czas na ruch. Serwer podaje stan na moment wysłania,
-    // więc odliczamy lokalnie od chwili, w której ten stan dotarł.
-    let clockBase = Date.now();
-    unsub.push(subscribe('game', () => { clockBase = Date.now(); }));
-
-    const ticker = setInterval(() => {
-        const game = store.game;
-        const value = document.getElementById('clock-value');
-        if (!value || !game || game.finished || game.timeLeftMs == null) return;
-
-        const left = game.timeLeftMs - (Date.now() - clockBase);
-        value.textContent = fmtTime(Math.max(0, left) / 1000);
-        value.parentElement.classList.toggle('clock-low', left < 15000);
-    }, 500);
+    const ticker = setInterval(tickClock, 250);
 
     // Klawiatura: Enter zatwierdza, Escape cofa.
     const onKey = (e) => {
         if (e.target.matches('input, textarea')) return;
+        // Przy otwartym oknie klawisze należą do okna.
+        if (document.querySelector('.modal-backdrop')) return;
         if (e.key === 'Enter' && canPlay() && store.placed.length) { e.preventDefault(); confirmMove(); }
         if (e.key === 'Escape' && store.placed.length) { e.preventDefault(); recallAll(); }
     };

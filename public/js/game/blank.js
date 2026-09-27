@@ -17,12 +17,29 @@ import { store } from '../store.js';
 export function showBlankModal(onPick) {
     const alphabet = store.game?.variant?.alphabet || '';
     let dialog = null;
+    let done = false;
+
+    const pick = (ch) => {
+        if (done) return;
+        done = true;
+        dialog.close();
+        onPick(ch);
+    };
+
+    // Wygodny skrót: wpisanie litery z klawiatury działa jak kliknięcie.
+    const onKey = (e) => {
+        const ch = e.key.toUpperCase();
+        if (ch.length === 1 && alphabet.includes(ch)) {
+            e.preventDefault();
+            pick(ch);
+        }
+    };
 
     const grid = el('div', { class: 'blank-grid' },
         [...alphabet].map(ch => el('button', {
             class: 'blank-key',
             type: 'button',
-            onclick: () => { dialog.close(); onPick(ch); },
+            onclick: () => pick(ch),
         }, ch)),
     );
 
@@ -32,19 +49,10 @@ export function showBlankModal(onPick) {
             el('p', { class: 'muted small' }, 'Blank przyjmie wybraną literę, ale zawsze liczy się jako 0 punktów.'),
             grid,
         ),
+        // Nasłuch znika razem z oknem — także po kliknięciu litery albo tła.
+        // Inaczej łapałby potem litery wpisywane na czacie.
+        onClose: () => document.removeEventListener('keydown', onKey),
     });
 
-    // Wygodny skrót: wpisanie litery z klawiatury działa jak kliknięcie.
-    const onKey = (e) => {
-        const ch = e.key.toUpperCase();
-        if (alphabet.includes(ch)) {
-            e.preventDefault();
-            document.removeEventListener('keydown', onKey);
-            dialog.close();
-            onPick(ch);
-        } else if (e.key === 'Escape') {
-            document.removeEventListener('keydown', onKey);
-        }
-    };
     document.addEventListener('keydown', onKey);
 }

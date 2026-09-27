@@ -107,6 +107,13 @@ function createRoutes(deps) {
 
     router.use(withUser);
 
+    /** Rzuca błąd, gdy zakładanie kont jest wyłączone w konfiguracji. */
+    function requireRegistrationOpen() {
+        if (deps.config.flags.allowRegistration === false) {
+            throw new AuthError('Zakładanie kont jest teraz wyłączone.', 403);
+        }
+    }
+
     // ─────────────────────────────────────────────────────────────────────────
     // KONFIGURACJA I STRONA GŁÓWNA
     // ─────────────────────────────────────────────────────────────────────────
@@ -140,6 +147,7 @@ function createRoutes(deps) {
     // ─────────────────────────────────────────────────────────────────────────
 
     router.post('/auth/register', wrap(async (req, res) => {
+        requireRegistrationOpen();
         const out = await deps.auth.register(req.body || {});
         res.json({ success: true, ...out });
     }));
@@ -156,6 +164,7 @@ function createRoutes(deps) {
 
     router.post('/auth/upgrade', requireUser, wrap(async (req, res) => {
         if (!req.user.isGuest) throw new AuthError('To konto już jest pełnoprawne.');
+        requireRegistrationOpen();
         const out = await deps.auth.upgradeGuest(req.user.id, req.body || {});
         res.json({ success: true, ...out });
     }));
@@ -182,7 +191,7 @@ function createRoutes(deps) {
 
     router.post('/profile/password', requireAccount, wrap(async (req, res) => {
         const { oldPassword, newPassword } = req.body || {};
-        await deps.auth.changePassword(req.user.id, oldPassword, newPassword);
+        await deps.auth.changePassword(req.user.id, oldPassword, newPassword, req.token);
         res.json({ success: true });
     }));
 
@@ -316,20 +325,28 @@ function createRoutes(deps) {
         }
         const ai = deps.imageSolver;
         const body = req.body || {};
-        const limit = Math.min(parseInt(body.limit || req.query.limit, 10) || 20, 50);
+        const limit = Math.max(1, Math.min(parseInt(body.limit || req.query.limit, 10) || 20, 50));
 
         // Solver liczy punkty wg konkretnego trybu — domyślnie tryb portalu.
+        if (body.variantId) {
+            // Cudzy tryb prywatny jest niedostępny także dla solvera.
+            const row = await deps.variants.findById(Number(body.variantId));
+            if (row && !row.is_public && row.owner_id !== (req.user && req.user.id)) {
+                return res.status(403).json({ success: false, error: 'Ten tryb jest prywatny.' });
+            }
+        }
         const variant = body.variantId
             ? await deps.variants.getCompiled(Number(body.variantId))
             : await deps.variants.getDefaultCompiled();
         if (!variant) return res.status(400).json({ success: false, error: 'Nie znaleziono trybu gry.' });
+        const dims = { size: variant.size, rackSize: variant.rackSize };
 
         // ── Tryb ręczny: plansza i litery jako tekst ─────────────────────────
         if (body.manual) {
             const rawBoard = Array.isArray(body.board) ? body.board : [];
             const rawRack = Array.isArray(body.rack) ? body.rack.join('') : String(body.rack || '');
 
-            const norm = ai.normalizeAiData({ board: rawBoard, rack: rawRack.split('') }, variant.alphabet);
+            const norm = ai.normalizeAiData({ board: rawBoard, rack: rawRack.split('') }, variant.alphabet, dims);
             const board = ai.buildBoard(norm.board, variant);
 
             if (!norm.rack.length) {
@@ -359,7 +376,18 @@ function createRoutes(deps) {
         }
 
         await deps.dict.ready;
-        const result = await ai.solveFromImage(buffer, deps.dict, { variant, limit });
+        let result;
+        try {
+            result = await ai.solveFromImage(buffer, deps.dict, { variant, limit });
+        } catch (err) {
+            // Zepsuty plik, brak klucza albo błąd dostawcy modelu — gracz ma
+            // dostać przyczynę, a nie ogólne „błąd serwera".
+            if (!err.expected) console.error('[API] Solver ze zdjęcia:', err.message);
+            return res.status(err.expected ? 400 : 502).json({
+                success: false,
+                error: err.message || 'Nie udało się rozpoznać planszy ze zdjęcia.',
+            });
+        }
         res.json(result);
     }));
 
@@ -376,6 +404,19 @@ function createRoutes(deps) {
         }
         if (err && err.message && err.expected) {
             return res.status(400).json({ success: false, error: err.message });
+        }
+        if (err instanceof multer.MulterError) {
+            const tooBig = err.code === 'LIMIT_FILE_SIZE';
+            return res.status(tooBig ? 413 : 400).json({
+                success: false,
+                error: tooBig ? 'Plik jest za duży (limit 15 MB).' : 'Niepoprawne przesłanie pliku — użyj pola "image".',
+            });
+        }
+        if (err && err.type === 'entity.parse.failed') {
+            return res.status(400).json({ success: false, error: 'Niepoprawny format żądania (JSON).' });
+        }
+        if (err && err.type === 'entity.too.large') {
+            return res.status(413).json({ success: false, error: 'Żądanie jest za duże.' });
         }
 
         console.error('[API] Błąd:', err);

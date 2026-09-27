@@ -67,7 +67,7 @@ function blankDefinition() {
 export default async function variantEditorScreen(host, params = {}) {
     const isNew = !params.id || params.id === 'nowy';
 
-    if (!store.user || store.user.isGuest) {
+    if (isNew && (!store.user || store.user.isGuest)) {
         fill(host, el('div', { class: 'card empty-state' },
             el('h2', {}, 'Tworzenie trybów wymaga konta'),
             el('p', { class: 'muted' }, 'Gość może grać w istniejące tryby, ale własnych nie zapisze.'),

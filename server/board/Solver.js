@@ -460,6 +460,9 @@ class Solver {
         const dx = horizontal ? 0 : 1;
         const dy = horizontal ? 1 : 0;
 
+        // Leżący blank jest wart tyle, ile mówi tryb gry — tak samo jak w słowie głównym.
+        const blankPoints = this.variant.pointsOf(this.variant.blankSymbol);
+
         let word = letter;
         let extraPoints = letterPoints * letterMultiplier;
 
@@ -470,7 +473,7 @@ class Solver {
             const t = tiles[nx][ny];
             if (!t.letter) break;
             word += t.letter;
-            if (!t.isBlank) extraPoints += board.getPointsForLetter(t.letter);
+            extraPoints += t.isBlank ? blankPoints : board.getPointsForLetter(t.letter);
         }
         for (let j = 1; j < SIZE; j++) {
             const nx = x - dx * j;
@@ -479,7 +482,7 @@ class Solver {
             const t = tiles[nx][ny];
             if (!t.letter) break;
             word = t.letter + word;
-            if (!t.isBlank) extraPoints += board.getPointsForLetter(t.letter);
+            extraPoints += t.isBlank ? blankPoints : board.getPointsForLetter(t.letter);
         }
 
         if (word.length === 1) return { word: null, points: 0 };

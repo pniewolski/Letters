@@ -217,8 +217,10 @@ class VariantRepo {
         if (row.owner_id !== userId) throw new VariantError('To nie jest twój tryb gry.');
 
         const patch = { updated_at: Date.now() };
-        if (data.name !== undefined) patch.name = String(data.name).trim().slice(0, 64) || row.name;
-        if (data.description !== undefined) patch.description = String(data.description).trim().slice(0, 250);
+        if (typeof data.name === 'string') patch.name = data.name.trim().slice(0, 64) || row.name;
+        if (data.description !== undefined) {
+            patch.description = typeof data.description === 'string' ? data.description.trim().slice(0, 250) : '';
+        }
         if (data.isPublic !== undefined) patch.is_public = data.isPublic ? 1 : 0;
         if (data.definition !== undefined) patch.definition = JSON.stringify(normalizeDefinition(data.definition));
 

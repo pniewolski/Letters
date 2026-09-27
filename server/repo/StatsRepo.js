@@ -242,7 +242,11 @@ class StatsRepo {
      */
     async summary(userId) {
         const row = await this.db.get('SELECT * FROM user_stats WHERE user_id = ?', [userId]);
-        const place = await this.db.scalar(
+        // Miejsce w rankingu ma tylko ten, kto w nim faktycznie jest:
+        // pełne konto z co najmniej jedną partią.
+        const me = await this.db.get('SELECT is_guest FROM users WHERE id = ?', [userId]);
+        const ranked = !!me && !me.is_guest && (row?.games || 0) >= 1;
+        const place = !ranked ? null : await this.db.scalar(
             `SELECT COUNT(*) + 1 FROM users u JOIN user_stats s ON s.user_id = u.id
              WHERE u.is_guest = 0 AND s.games >= 1 AND u.rating > (SELECT rating FROM users WHERE id = ?)`,
             [userId],
