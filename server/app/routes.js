@@ -39,6 +39,7 @@ const multer = require('multer');
 const { AuthError } = require('../auth/AuthService');
 const { VariantError, normalizeDefinition, summarize } = require('../variant/schema');
 const { LEVELS } = require('../game/Strategy');
+const { CLOCK } = require('../lobby/TableManager');
 const UserRepo = require('../repo/UserRepo');
 
 /** Upload obrazu do pamięci (bez zapisu na dysk). */
@@ -125,6 +126,7 @@ function createRoutes(deps) {
             flags: deps.config.flags,
             aiLevels: Object.entries(LEVELS).map(([level, info]) => ({ level: Number(level), name: info.name })),
             limits: deps.config.limits,
+            clock: { defaultSeconds: CLOCK.defaultSeconds },
         });
     }));
 

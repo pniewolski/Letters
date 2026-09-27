@@ -435,6 +435,9 @@ textarea { resize: vertical; }
 .player-sub { font-size: .76rem; }
 .player-score { font-size: 1.2rem; font-weight: 700; color: var(--gold); font-variant-numeric: tabular-nums; }
 .player-time { font-variant-numeric: tabular-nums; }
+.turn-clock-score-time { font-size: .78rem; color: var(--muted); font-variant-numeric: tabular-nums; }
+.turn-clock-score.active .turn-clock-score-time { color: var(--text); }
+.clock-low { color: var(--red) !important; font-weight: 700; }
 
 .chat-card { flex: 1; display: flex; flex-direction: column; padding: 0; overflow: hidden; min-height: 220px; }
 .feed { flex: 1; overflow-y: auto; padding: 10px 12px; font-size: .85rem; display: flex; flex-direction: column; gap: 3px; max-height: 42vh; }
@@ -704,7 +707,9 @@ textarea { resize: vertical; }
 
 @media (max-width: 640px) {
     .header-inner { flex-wrap: wrap; gap: 10px; padding: 8px 12px; }
-    .main-nav { order: 3; width: 100%; justify-content: space-around; }
+    /* Menu w osobnym rzędzie na całą szerokość — sama `width` nie wystarczy,
+       bo bazowe `flex: 1` daje podstawę 0% i menu wciskało się obok logo. */
+    .main-nav { order: 3; flex: 1 1 100%; justify-content: space-around; }
     .app-view { padding: 12px 10px 30px; }
     .game-screen { display: flex; flex-direction: column; }
     .panel-left { flex-direction: column; }

@@ -72,6 +72,19 @@ function tableError(message) {
     return err;
 }
 
+/**
+ * Czas na partię dla każdego gracza (zegar szachowy). Na pojedynczy ruch
+ * limitu nie ma — gracz sam decyduje, na co wyda swoją pulę.
+ */
+const CLOCK = {
+    /** Domyślna pula, gdy zakładający nie wybrał innej. */
+    defaultSeconds: 20 * 60,
+    /** Najkrótsza pula, jaką da się ustawić (0 = bez limitu jest osobno). */
+    minSeconds: 60,
+    /** Najdłuższa pula. */
+    maxSeconds: 3 * 60 * 60,
+};
+
 /** Ile stołów może mieć jeden gracz jednocześnie. */
 const MAX_TABLES_PER_USER = 3;
 
@@ -96,7 +109,7 @@ class TableManager extends EventEmitter {
         this.userTable = new Map();
         /** @type {Map<number, NodeJS.Timeout>} tableId → timer ruchu komputera. */
         this.aiTimers = new Map();
-        /** @type {Map<number, NodeJS.Timeout>} tableId → timer limitu czasu na ruch. */
+        /** @type {Map<number, NodeJS.Timeout>} tableId → timer końca czasu gracza na partię. */
         this.clockTimers = new Map();
         /** @type {Map<number, NodeJS.Timeout>} tableId → timer pasa za nieobecnego. */
         this.absentTimers = new Map();
@@ -127,7 +140,8 @@ class TableManager extends EventEmitter {
      * @param {boolean} [options.isPrivate=false] - Ukryj w lobby
      * @param {string} [options.password] - Hasło do stołu
      * @param {boolean} [options.rated=true] - Czy partia jest rankingowa
-     * @param {number} [options.turnSeconds=0] - Limit czasu na ruch
+     * @param {number} [options.clockSeconds] - Czas na partię dla każdego gracza
+     *   w sekundach (0 = bez limitu, brak = {@link CLOCK}.defaultSeconds)
      * @returns {Promise<GameTable>}
      * @throws {Error} Gdy przekroczono limit stołów albo tryb gry nie istnieje
      */
@@ -172,7 +186,7 @@ class TableManager extends EventEmitter {
         const computerSeats = Math.max(0, Math.min(seats, Math.floor(Number(options.computerSeats)) || 0));
         const name = String(options.name || `Stolik ${user.displayName}`).trim().slice(0, 64);
         const aiLevel = Math.max(1, Math.min(3, Math.floor(Number(options.aiLevel)) || 2));
-        const turnSeconds = Math.max(0, Math.min(3600, Math.floor(Number(options.turnSeconds)) || 0));
+        const clockSeconds = TableManager.normalizeClock(options.clockSeconds);
 
         // Partie z komputerem nie liczą się do rankingu. Gościom ranking i tak
         // nie przysługuje — pilnuje tego warstwa statystyk, więc tutaj tylko
@@ -197,7 +211,7 @@ class TableManager extends EventEmitter {
             is_private: options.isPrivate ? 1 : 0,
             password_hash: passwordHash,
             rated: rated ? 1 : 0,
-            turn_seconds: turnSeconds,
+            clock_seconds: clockSeconds,
             status: STATUS.WAITING,
             created_at: now,
             updated_at: now,
@@ -215,7 +229,7 @@ class TableManager extends EventEmitter {
             isPrivate: !!options.isPrivate,
             passwordHash,
             rated,
-            turnSeconds,
+            clockSeconds,
         });
 
         this.tables.set(id, table);
@@ -647,7 +661,7 @@ class TableManager extends EventEmitter {
     }
 
     /**
-     * Planuje ruch komputera albo pilnowanie limitu czasu człowieka.
+     * Planuje ruch komputera albo pilnowanie zegara człowieka.
      * @param {GameTable} table
      * @private
      */
@@ -672,18 +686,17 @@ class TableManager extends EventEmitter {
             return;
         }
 
-        // Liczymy od tego, co zostało na zegarze, a nie od pełnego limitu:
-        // planowanie powtarza się także w środku tury (rozłączenie, powrót)
-        // i nie może wtedy dawać graczowi czasu od nowa.
+        // Zegar gracza: planowanie powtarza się także w środku tury
+        // (rozłączenie, powrót), więc liczymy od tego, co faktycznie zostało.
         const timeLeft = table.timeLeftMs();
         if (timeLeft != null) {
-            const timer = setTimeout(() => this._timeoutTurn(table), timeLeft + 250);
+            const timer = setTimeout(() => this._clockExpired(table), timeLeft + 250);
             this.clockTimers.set(table.id, timer);
         }
 
         // Gracz bez połączenia nie może zablokować stołu na zawsze — po dłuższej
-        // nieobecności pasujemy za niego. Przy stole z zegarem zajmie się tym
-        // limit czasu, o ile jest krótszy.
+        // nieobecności pasujemy za niego. Jego zegar płynie przy tym dalej,
+        // a jeśli skończy się wcześniej, rozstrzyga on.
         // Pasujemy tylko wtedy, gdy ktoś na ten ruch czeka — w grze z samym
         // komputerem partia po prostu stoi do powrotu gracza.
         const seat = table.seats[table.game.currentPlayer()];
@@ -753,11 +766,12 @@ class TableManager extends EventEmitter {
     }
 
     /**
-     * Reakcja na przekroczenie limitu czasu — gracz pasuje automatycznie.
+     * Koniec czasu gracza na partię: odpada tak, jak przy poddaniu — przy
+     * dwóch graczach przegrywa, przy większej liczbie reszta gra dalej.
      * @param {GameTable} table
      * @private
      */
-    async _timeoutTurn(table) {
+    async _clockExpired(table) {
         this.clockTimers.delete(table.id);
         if (!table.game || table.game.finished || table.status !== STATUS.PLAYING) return;
 
@@ -765,12 +779,15 @@ class TableManager extends EventEmitter {
         const seat = table.seats[slot];
         if (seat.type !== 'human') return;
 
-        const result = table.game.pass(slot);
-        this.emit('move', { table, move: { ...result.move, timeout: true } });
-        this.emit('chat', {
-            table,
-            entry: { userId: null, name: 'Zegar', slot, message: `${seat.name} nie zdążył — pas.`, at: Date.now(), system: true },
-        });
+        // Timer mógł ruszyć odrobinę za wcześnie — wtedy tylko planujemy od nowa.
+        if (table.timeLeftMs() > 0) {
+            this._scheduleNext(table);
+            return;
+        }
+
+        const result = table.game.timeout(slot);
+        seat.resigned = true;
+        this.emit('move', { table, move: result.move });
         await this._afterTurn(table);
     }
 
@@ -955,6 +972,18 @@ class TableManager extends EventEmitter {
     }
 
     /**
+     * Sprowadza wybrany czas na partię do dozwolonego zakresu.
+     * @param {*} value - Sekundy od klienta (`undefined` = domyślny czas)
+     * @returns {number} Sekundy; 0 oznacza brak limitu
+     */
+    static normalizeClock(value) {
+        if (value === undefined || value === null || value === '') return CLOCK.defaultSeconds;
+        const seconds = Math.floor(Number(value));
+        if (!Number.isFinite(seconds) || seconds <= 0) return 0;
+        return Math.max(CLOCK.minSeconds, Math.min(CLOCK.maxSeconds, seconds));
+    }
+
+    /**
      * Czy przy stole nie został nikt żywy.
      * @param {GameTable} table
      * @returns {boolean}
@@ -1047,3 +1076,4 @@ class TableManager extends EventEmitter {
 module.exports = TableManager;
 module.exports.TIMING = TIMING;
 module.exports.MAX_TABLES_PER_USER = MAX_TABLES_PER_USER;
+module.exports.CLOCK = CLOCK;

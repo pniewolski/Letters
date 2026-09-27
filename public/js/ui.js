@@ -196,6 +196,17 @@ export function fmtTime(seconds) {
 }
 
 /**
+ * Opisuje czas na partię ustawiony przy stole.
+ * @param {number} seconds - Pula każdego gracza (0 = bez limitu)
+ * @returns {string} Np. „20 min na gracza"
+ */
+export function fmtClock(seconds) {
+    if (!seconds) return 'bez limitu czasu';
+    const minutes = seconds / 60;
+    return `${Number.isInteger(minutes) ? minutes : minutes.toFixed(1)} min na gracza`;
+}
+
+/**
  * Zamienia znacznik czasu na opis w stylu „3 min temu".
  * @param {number} timestamp - Czas w milisekundach
  * @returns {string}

@@ -4,7 +4,7 @@
  * po kodzie. Lista odświeża się sama — serwer rozsyła ją przy każdej zmianie.
  */
 
-import { el, fill, toast, modal, avatar, plural, fmtAgo } from '../ui.js';
+import { el, fill, toast, modal, avatar, plural, fmtAgo, fmtClock } from '../ui.js';
 import { store, subscribe, setState, clearPlacement } from '../store.js';
 import { call } from '../net.js';
 import { api } from '../api.js';
@@ -110,7 +110,7 @@ export default async function lobbyScreen(host) {
 
             el('div', { class: 'table-card-meta muted small' },
                 `${statusLabel} · plansza ${table.variant.size}×${table.variant.size}`,
-                table.turnSeconds ? ` · ${table.turnSeconds}s na ruch` : ' · bez limitu czasu',
+                ` · ${fmtClock(table.clockSeconds)}`,
                 table.spectators ? ` · ${plural(table.spectators, 'widz', 'widzów', 'widzów')}` : '',
                 ` · ${fmtAgo(table.createdAt)}`,
             ),
@@ -270,11 +270,12 @@ export function openCreateTable(variants, preselectVariantId = null) {
     const aiLevel = el('select', {},
         (store.config.aiLevels || []).map(l => el('option', { value: String(l.level) }, l.name)));
 
-    const turnSeconds = el('select', {},
-        [
-            ['0', 'bez limitu'], ['30', '30 sekund'], ['60', 'minuta'],
-            ['120', '2 minuty'], ['300', '5 minut'],
-        ].map(([value, label]) => el('option', { value }, label)));
+    // Czas na całą partię dla każdego gracza — jak zegar szachowy. Płynie
+    // tylko w turze gracza; na pojedynczy ruch limitu nie ma.
+    const clockSeconds = el('select', {},
+        [0, 5, 10, 15, 20, 30, 45, 60].map(min => el('option', { value: String(min * 60) },
+            min === 0 ? 'bez limitu' : `${min} minut`)));
+    clockSeconds.value = String(store.config.clock?.defaultSeconds ?? 20 * 60);
 
     const isPrivate = el('input', { type: 'checkbox' });
     const password = el('input', { type: 'password', placeholder: 'Hasło (opcjonalnie)' });
@@ -319,7 +320,7 @@ export function openCreateTable(variants, preselectVariantId = null) {
             field('Liczba miejsc', seats),
             field('Miejsca dla komputera', computerSeats),
             field('Poziom komputera', aiLevel),
-            field('Czas na ruch', turnSeconds),
+            field('Czas na partię (każdy gracz)', clockSeconds),
             field('Hasło', password),
             el('label', { class: 'checkbox-row' }, isPrivate, ' Ukryj stół w lobby (tylko po kodzie)'),
             ratedNote,
@@ -337,7 +338,7 @@ export function openCreateTable(variants, preselectVariantId = null) {
                             seats: Number(seats.value),
                             computerSeats: Number(computerSeats.value),
                             aiLevel: Number(aiLevel.value),
-                            turnSeconds: Number(turnSeconds.value),
+                            clockSeconds: Number(clockSeconds.value),
                             isPrivate: isPrivate.checked,
                             password: password.value || undefined,
                         });

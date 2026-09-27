@@ -37,14 +37,16 @@ class Game {
 
         /** @type {boolean} Czy partia jest rozliczona. */
         this.finished = false;
-        /** @type {string|null} Powód zakończenia: 'out' | 'passes' | 'resign' | 'abandoned' */
+        /** @type {string|null} Powód zakończenia: 'out' | 'passes' | 'resign' | 'time' | 'abandoned' */
         this.endReason = null;
         /** @type {number} Ile kolejnych tur minęło bez zdobycia punktów. */
         this.scorelessTurns = 0;
         /** @type {Array<object>} Log ruchów (do podglądu i zapisu w bazie). */
         this.moves = [];
-        /** @type {Set<number>} Gracze, którzy poddali partię. */
+        /** @type {Set<number>} Gracze, którzy odpadli z partii (poddanie albo koniec czasu). */
         this.resigned = new Set();
+        /** @type {Set<number>} Gracze, którym skończył się czas na partię. */
+        this.timedOut = new Set();
         /** @type {number} Znacznik czasu rozpoczęcia. */
         this.startedAt = Date.now();
     }
@@ -106,9 +108,10 @@ class Game {
     _checkEnd() {
         if (this.finished) return true;
 
-        // Zostaje tylko jeden niepoddany gracz.
+        // Zostaje tylko jeden gracz w grze.
         if (this.playerCount - this.resigned.size <= 1) {
-            return this._finalize('resign');
+            const last = this.moves[this.moves.length - 1];
+            return this._finalize(last && last.type === 'timeout' ? 'time' : 'resign');
         }
 
         // Ktoś wyszedł z liter, a worek jest pusty.
@@ -249,11 +252,33 @@ class Game {
      * @returns {{success: boolean, move?: object}}
      */
     resign(player) {
+        return this._withdraw(player, 'resign');
+    }
+
+    /**
+     * Koniec czasu na partię. Skutek jak przy poddaniu: gracz odpada i ląduje
+     * na końcu stawki bez względu na punkty — przy dwóch graczach przegrywa.
+     * @param {number} player - Numer gracza
+     * @returns {{success: boolean, move?: object}}
+     */
+    timeout(player) {
+        this.timedOut.add(player);
+        return this._withdraw(player, 'timeout');
+    }
+
+    /**
+     * Wycofuje gracza z partii.
+     * @param {number} player - Numer gracza
+     * @param {'resign'|'timeout'} type - Rodzaj wpisu w logu
+     * @returns {{success: boolean, move: object}}
+     * @private
+     */
+    _withdraw(player, type) {
         const wasTheirTurn = this.table.currentPlayer() === player;
         this.resigned.add(player);
 
         const move = this._record(
-            { slot: player, type: 'resign', points: 0 },
+            { slot: player, type, points: 0 },
             { consumesTurn: wasTheirTurn },
         );
         return { success: true, move };

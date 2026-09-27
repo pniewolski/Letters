@@ -8,7 +8,7 @@
  * czy mamy swoje miejsce (`mySlot`) i czyja jest tura.
  */
 
-import { el, fill, toast, confirmDialog, fmtTime, avatar, plural } from '../ui.js';
+import { el, fill, toast, confirmDialog, fmtTime, fmtClock, avatar, plural } from '../ui.js';
 import { store, subscribe, setState, canPlay, clearPlacement, touch } from '../store.js';
 import { call } from '../net.js';
 import { navigate, refresh } from '../router.js';
@@ -243,7 +243,7 @@ export default function gameScreen(host) {
                 metaItem('Worek', game ? String(game.bagSize) : '—'),
                 metaItem('Ranking', table.rated ? 'tak' : 'nie'),
                 metaItem('Plansza', `${table.variant.size}×${table.variant.size}`),
-                metaItem('Czas na ruch', table.turnSeconds ? fmtTime(table.turnSeconds) : 'bez limitu'),
+                metaItem('Czas gracza', table.clockSeconds ? fmtTime(table.clockSeconds) : 'bez limitu'),
                 metaItem('Ruch nr', game ? String((lastMove ? lastMove.n : 0) + (game.finished ? 0 : 1)) : '—'),
             ),
         );
@@ -253,9 +253,10 @@ export default function gameScreen(host) {
      * Pasek nad planszą: czyja tura i zegar. Leży przy planszy, a nie w panelu
      * bocznym, żeby na telefonie był widoczny bez przewijania.
      *
-     * Przy stole z limitem zegar odlicza czas do końca ruchu; bez limitu
-     * pokazuje, ile tura już trwa. Rysujemy tu tylko szkielet — liczby
-     * wpisuje `tickClock()`.
+     * Przy stole z czasem na partię duży zegar pokazuje, ile zostało graczowi,
+     * którego jest tura (jak zegar szachowy), a przy wynikach — ile zostało
+     * pozostałym. Bez limitu i w turze komputera pokazuje, ile trwa ruch.
+     * Rysujemy tu tylko szkielet — liczby wpisuje `tickClock()`.
      */
     function renderClock() {
         const game = store.game;
@@ -277,6 +278,7 @@ export default function gameScreen(host) {
         const current = game.players[game.currentSlot];
         const mine = game.mySlot != null && game.currentSlot === game.mySlot;
         const limited = game.timeLeftMs != null;
+        const clockFor = game.clockSeconds ? fmtClock(game.clockSeconds) : 'bez limitu czasu';
 
         const who = mine
             ? 'Twoja kolej'
@@ -288,11 +290,11 @@ export default function gameScreen(host) {
         fill(clockEl,
             el('div', { class: 'turn-clock-who' },
                 who,
-                el('span', { class: 'turn-clock-game', title: 'Czas trwania partii' },
+                el('span', { class: 'turn-clock-game', title: `Czas trwania partii · ${clockFor}` },
                     'partia ', el('span', { id: 'clock-game' }))),
             scoreStrip(game),
             el('div', { class: 'turn-clock-time' },
-                el('span', { class: 'turn-clock-label' }, limited ? 'zostało' : 'czas ruchu'),
+                el('span', { class: 'turn-clock-label' }, limited ? (mine ? 'twój czas' : 'zostało') : 'czas ruchu'),
                 el('span', { class: 'turn-clock-value', id: 'clock-value' })),
             limited
                 ? el('div', { class: 'turn-clock-bar' }, el('div', { class: 'turn-clock-fill', id: 'clock-fill' }))
@@ -311,7 +313,36 @@ export default function gameScreen(host) {
         },
             el('span', { class: 'turn-clock-score-name' }, p.slot === game.mySlot ? 'Ty' : p.name),
             el('strong', {}, String(p.score)),
+            // Zegary wszystkich — na telefonie lista graczy leży na dole strony.
+            p.timeLeftMs != null
+                ? el('span', { class: 'turn-clock-score-time', 'data-clock-slot': String(p.slot) },
+                    fmtTime(Math.ceil(p.timeLeftMs / 1000)))
+                : null,
         )));
+    }
+
+    /**
+     * Czy na zegarze zostało już mało czasu (ostatnia minuta, a przy krótkich
+     * partiach ostatnia dziesiąta część puli).
+     * @param {number} leftMs - Pozostały czas
+     * @param {number} limitMs - Cała pula
+     * @returns {boolean}
+     */
+    function clockLow(leftMs, limitMs) {
+        return leftMs <= Math.min(60000, limitMs / 10);
+    }
+
+    /**
+     * Pozostały czas gracza z doliczeniem tego, co upłynęło od odbioru stanu.
+     * @param {object} game - Stan partii
+     * @param {object} player - Gracz ze stanu partii
+     * @param {number} since - Milisekundy od odbioru stanu
+     * @returns {number|null} `null`, gdy gracz nie ma limitu
+     */
+    function liveClockLeft(game, player, since) {
+        if (player.timeLeftMs == null) return null;
+        const running = !game.finished && player.slot === game.currentSlot ? since : 0;
+        return Math.max(0, player.timeLeftMs - running);
     }
 
     /** Wpisuje bieżące czasy w pasek zegara i wiersze graczy. */
@@ -328,10 +359,10 @@ export default function gameScreen(host) {
         if (value) {
             if (game.timeLeftMs != null) {
                 const left = Math.max(0, game.timeLeftMs - since);
-                const limit = game.turnSeconds * 1000;
+                const limit = game.clockSeconds * 1000;
                 // W górę, żeby 0:00 pojawiało się dopiero, gdy czas naprawdę minął.
                 value.textContent = fmtTime(Math.ceil(left / 1000));
-                clockEl.classList.toggle('low', left <= Math.min(15000, limit / 3));
+                clockEl.classList.toggle('low', clockLow(left, limit));
 
                 const bar = document.getElementById('clock-fill');
                 if (bar) bar.style.width = `${Math.min(100, (left / limit) * 100)}%`;
@@ -343,11 +374,19 @@ export default function gameScreen(host) {
         const total = document.getElementById('clock-game');
         if (total) total.textContent = fmtTime((game.gameElapsedMs + since) / 1000);
 
-        for (const node of playersEl.querySelectorAll('[data-time-slot]')) {
-            const player = game.players[Number(node.dataset.timeSlot)];
+        // Zegary graczy: przy limicie — ile zostało, bez limitu — ile zużyli.
+        for (const node of document.querySelectorAll('[data-clock-slot], [data-time-slot]')) {
+            const player = game.players[Number(node.dataset.clockSlot ?? node.dataset.timeSlot)];
             if (!player) continue;
-            const running = player.slot === game.currentSlot ? turnElapsed : 0;
-            node.textContent = fmtTime(((player.timeUsedMs || 0) + running) / 1000);
+
+            const left = liveClockLeft(game, player, since);
+            if (left != null) {
+                node.textContent = fmtTime(Math.ceil(left / 1000));
+                node.classList.toggle('clock-low', clockLow(left, game.clockSeconds * 1000));
+            } else {
+                const running = player.slot === game.currentSlot ? turnElapsed : 0;
+                node.textContent = fmtTime(((player.timeUsedMs || 0) + running) / 1000);
+            }
         }
     }
 
@@ -355,7 +394,25 @@ export default function gameScreen(host) {
         el('span', { class: 'meta-label' }, label),
         el('span', { class: 'meta-value' }, value));
 
-    /** Lista graczy z wynikami i łącznym czasem namysłu. */
+    /**
+     * Zegar w wierszu gracza: przy stole z czasem na partię — ile mu zostało,
+     * bez limitu (i dla komputera) — ile czasu zużył na namysł.
+     * @param {object} game - Stan partii
+     * @param {object} p - Gracz ze stanu partii
+     * @returns {HTMLElement}
+     */
+    function playerClock(game, p) {
+        if (p.timeLeftMs != null) {
+            return el('span', { class: 'player-time', title: 'Czas, który został do końca partii' },
+                ' · ⏳ ',
+                el('span', { 'data-clock-slot': String(p.slot) }, fmtTime(Math.ceil(p.timeLeftMs / 1000))));
+        }
+        return el('span', { class: 'player-time', title: 'Łączny czas namysłu w tej partii' },
+            ' · ⏱ ',
+            el('span', { 'data-time-slot': String(p.slot) }, fmtTime((p.timeUsedMs || 0) / 1000)));
+    }
+
+    /** Lista graczy z wynikami i zegarami (pozostały czas albo czas namysłu). */
     function renderPlayers() {
         const game = store.game;
         const table = store.table;
@@ -381,11 +438,8 @@ export default function gameScreen(host) {
                         el('div', { class: 'player-sub muted small' },
                             game ? `${plural(p.rackSize ?? 0, 'litera', 'litery', 'liter')} na stojaku` : 'czeka',
                             p.connected === false && !p.isComputer && p.type !== 'open' && p.name ? ' · rozłączony' : '',
-                            game
-                                ? el('span', { class: 'player-time', title: 'Łączny czas namysłu w tej partii' },
-                                    ' · ⏱ ',
-                                    el('span', { 'data-time-slot': String(p.slot) }, fmtTime((p.timeUsedMs || 0) / 1000)))
-                                : null,
+                            game && p.timedOut ? ' · koniec czasu' : '',
+                            game ? playerClock(game, p) : null,
                         ),
                     ),
                     el('div', { class: 'player-score' }, game ? String(p.score) : '—'),

@@ -155,6 +155,15 @@ const MIGRATIONS = [
             ){{ENGINE}}`,
         ],
     },
+    {
+        // Zegar szachowy: każdy gracz ma pulę czasu na całą partię. Kolumna
+        // `turn_seconds` (dawny limit na ruch) zostaje nieużywana — usuwanie
+        // kolumn różni się między silnikami, a nic jej już nie czyta.
+        id: '002-clock',
+        sql: [
+            `ALTER TABLE game_tables ADD COLUMN clock_seconds {{INT}} NOT NULL DEFAULT 0`,
+        ],
+    },
 ];
 
 module.exports = MIGRATIONS;

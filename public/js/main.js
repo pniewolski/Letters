@@ -289,9 +289,10 @@ function describeMove(msg) {
     const text = {
         word: () => `${move.wordSimple} za ${move.points} pkt${move.bingo ? ' 🎉 premia za stojak!' : ''}`,
         exchange: () => `wymienia ${plural(move.count ?? (move.letters || []).length, 'literę', 'litery', 'liter')}`,
-        pass: () => (move.timeout ? 'nie zdążył — pas' : 'pasuje'),
+        pass: () => 'pasuje',
         invalid: () => `traci turę (nie znam słowa: ${(move.wrongWords || []).join(', ')})`,
         resign: () => 'poddaje partię',
+        timeout: () => 'koniec czasu — odpada z partii',
     }[move.type];
 
     pushFeed({ kind: 'move', name: who, text: text ? text() : move.type });

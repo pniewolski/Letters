@@ -97,7 +97,7 @@ lobby.requiresAuth = false;
 
 /**
  * Zakłada stół.
- * Klient: `{ type: 'table:create', name, variantId, seats, computerSeats, aiLevel, isPrivate, password, rated, turnSeconds }`
+ * Klient: `{ type: 'table:create', name, variantId, seats, computerSeats, aiLevel, isPrivate, password, rated, clockSeconds }`
  */
 async function tableCreate(ctx, payload) {
     const table = await ctx.deps.tables.create(ctx.user, payload);

@@ -1,7 +1,7 @@
 /**
  * @class GameTable
  * @description Stół w lobby — czyli to, przy czym siadają gracze. Trzyma
- * konfigurację (tryb gry, liczba miejsc, zegar, prywatność), obsadę miejsc
+ * konfigurację (tryb gry, liczba miejsc, czas na partię, prywatność), obsadę miejsc
  * oraz trwającą partię.
  *
  * Miejsce przy stole może być:
@@ -38,7 +38,9 @@ class GameTable {
      * @param {boolean} [config.isPrivate=false] - Czy stół jest ukryty w lobby
      * @param {string|null} [config.passwordHash=null] - Hash hasła do stołu
      * @param {boolean} [config.rated=true] - Czy partia liczy się do rankingu
-     * @param {number} [config.turnSeconds=0] - Limit sekund na ruch (0 = bez limitu)
+     * @param {number} [config.clockSeconds=0] - Czas na partię dla każdego gracza
+     *   w sekundach (0 = bez limitu). Liczy się jak zegar szachowy: płynie tylko
+     *   w turze gracza, a na ruch limitu nie ma.
      */
     constructor(config) {
         this.id = config.id;
@@ -51,7 +53,7 @@ class GameTable {
         this.isPrivate = !!config.isPrivate;
         this.passwordHash = config.passwordHash || null;
         this.rated = config.rated !== false;
-        this.turnSeconds = Math.max(0, Math.min(3600, config.turnSeconds || 0));
+        this.clockSeconds = Math.max(0, Math.floor(config.clockSeconds || 0));
 
         this.status = STATUS.WAITING;
         this.createdAt = Date.now();
@@ -289,14 +291,29 @@ class GameTable {
     }
 
     /**
-     * Ile milisekund zostało graczowi na bieżący ruch. Limit dotyczy tylko
-     * ludzi — komputer rusza się sam, więc w jego turze zegar nie odlicza.
-     * @returns {number|null} `null`, gdy stół nie ma limitu czasu albo rusza się komputer
+     * Ile milisekund zostało graczowi z jego czasu na partię. Limit dotyczy
+     * tylko ludzi — komputer rusza się sam i swojego zegara nie ma.
+     * @param {number} slot - Numer miejsca
+     * @returns {number|null} `null`, gdy stół nie ma limitu albo miejsce zajmuje komputer
+     */
+    clockLeftMs(slot) {
+        const seat = this.seats[slot];
+        if (!this.clockSeconds || !seat || seat.type !== 'human') return null;
+
+        const running = this.status === STATUS.PLAYING && slot === this.turnSlot && this.turnStartedAt
+            ? Date.now() - this.turnStartedAt
+            : 0;
+        return Math.max(0, this.clockSeconds * 1000 - this.timeUsed[slot] - running);
+    }
+
+    /**
+     * Ile milisekund zostało na zegarze gracza, którego jest tura.
+     * @returns {number|null} `null`, gdy partia nie trwa, stół nie ma limitu
+     *   albo rusza się komputer
      */
     timeLeftMs() {
-        if (!this.turnSeconds || !this.turnStartedAt || this.status !== STATUS.PLAYING) return null;
-        if (this.isComputerTurn()) return null;
-        return Math.max(0, this.turnSeconds * 1000 - (Date.now() - this.turnStartedAt));
+        if (!this.game || this.game.finished || this.status !== STATUS.PLAYING) return null;
+        return this.clockLeftMs(this.game.currentPlayer());
     }
 
     /**
@@ -409,7 +426,7 @@ class GameTable {
             hasPassword: !!this.passwordHash,
             isPrivate: this.isPrivate,
             rated: this.rated,
-            turnSeconds: this.turnSeconds,
+            clockSeconds: this.clockSeconds,
             aiLevel: this.aiLevel,
             spectators: this.spectators.size,
             variant: {
@@ -475,7 +492,7 @@ class GameTable {
             endReason: this.game.endReason,
             mySlot,
             myRack: mySlot != null ? [...table.stack[mySlot]] : null,
-            turnSeconds: this.turnSeconds,
+            clockSeconds: this.clockSeconds,
             // Czasy są podane na moment wysłania — klient dolicza resztę sam.
             timeLeftMs: this.timeLeftMs(),
             turnElapsedMs: this.turnElapsedMs(),
@@ -489,8 +506,10 @@ class GameTable {
                 isGuest: s.isGuest,
                 connected: s.connected,
                 resigned: this.game.resigned.has(s.slot),
+                timedOut: this.game.timedOut.has(s.slot),
                 score: table.points[s.slot],
                 timeUsedMs: this.timeUsed[s.slot],
+                timeLeftMs: this.clockLeftMs(s.slot),
                 rackSize: table.stack[s.slot].length,
                 rack: revealAll ? [...table.stack[s.slot]] : null,
             })),

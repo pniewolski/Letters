@@ -204,14 +204,24 @@ Pas pada tylko wtedy, gdy na ruch czeka inny człowiek: w grze z komputerem
 partia stoi do powrotu gracza, a stół bez nikogo podłączonego jest zamykany
 dopiero po **10 minutach**.
 
-### Pomiar czasu
+### Czas na partię
+
+Stół ma **czas na partię dla każdego gracza** — domyślnie 20 minut
+(`CLOCK` w `TableManager.js`), do wyboru przy zakładaniu, także „bez limitu".
+Działa jak zegar szachowy: płynie tylko w turze gracza, a na pojedynczy ruch
+limitu nie ma. Komputer swojego zegara nie ma.
+
+Gdy graczowi skończy się czas, odpada z partii tak jak przy poddaniu: przy
+dwóch graczach przegrywa niezależnie od punktów (powód końca `time`), przy
+trzech–czterech pozostali grają dalej.
 
 Stan partii niesie czasy liczone przez serwer na moment wysłania:
-`timeLeftMs` (ile zostało na ruch; `null` bez limitu i w turze komputera),
-`turnElapsedMs` (ile trwa tura), `gameElapsedMs` (ile trwa partia) oraz
-`players[].timeUsedMs` (łączny czas namysłu gracza). Front zapamiętuje chwilę
-odbioru stanu (`receivedAt`) i dolicza resztę sam — pasek nad planszą pokazuje
-odliczanie albo, przy stole bez limitu, czas bieżącego ruchu.
+`timeLeftMs` (ile zostało graczowi, którego jest tura; `null` bez limitu
+i w turze komputera), `players[].timeLeftMs` (pozostały czas każdego gracza),
+`players[].timeUsedMs` (łączny czas namysłu), `turnElapsedMs` (ile trwa tura)
+i `gameElapsedMs` (ile trwa partia). Front zapamiętuje chwilę odbioru stanu
+(`receivedAt`) i dolicza resztę sam — pasek nad planszą pokazuje zegar gracza
+przy ruchu i zegary pozostałych przy ich wynikach.
 
 ## Konta i goście
 
