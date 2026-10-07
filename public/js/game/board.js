@@ -14,13 +14,13 @@ import { sendPreview } from './preview.js';
 
 /** Znak pola planszy → klasa CSS i podpis. */
 const CELL_STYLES = {
-    '2': { cls: 'bonus-w2', label: '2×S', title: 'Podwójna wartość słowa' },
-    '3': { cls: 'bonus-w3', label: '3×S', title: 'Potrójna wartość słowa' },
-    '4': { cls: 'bonus-w4', label: '4×S', title: 'Poczwórna wartość słowa' },
-    'd': { cls: 'bonus-l2', label: '2×L', title: 'Podwójna wartość litery' },
-    't': { cls: 'bonus-l3', label: '3×L', title: 'Potrójna wartość litery' },
-    'q': { cls: 'bonus-l4', label: '4×L', title: 'Poczwórna wartość litery' },
-    '@': { cls: 'cell-start', label: '', title: 'Pole startowe' },
+    '2': { cls: 'bonus-w2', label: '2×S', title: 'Podwójna wartość słowa', w: 2 },
+    '3': { cls: 'bonus-w3', label: '3×S', title: 'Potrójna wartość słowa', w: 3 },
+    '4': { cls: 'bonus-w4', label: '4×S', title: 'Poczwórna wartość słowa', w: 4 },
+    'd': { cls: 'bonus-l2', label: '2×L', title: 'Podwójna wartość litery', l: 2 },
+    't': { cls: 'bonus-l3', label: '3×L', title: 'Potrójna wartość litery', l: 3 },
+    'q': { cls: 'bonus-l4', label: '4×L', title: 'Poczwórna wartość litery', l: 4 },
+    '@': { cls: 'cell-start', label: '', title: 'Pole startowe', start: true },
 };
 
 let boardEl = null;
@@ -37,6 +37,17 @@ export function pointsOf(letter, isBlank = false) {
     if (!variant) return 0;
     if (isBlank) return variant.letterPoints[variant.blankSymbol] || 0;
     return variant.letterPoints[String(letter || '').toUpperCase()] || 0;
+}
+
+/**
+ * Mnożniki pola wg siatki trybu bieżącej partii.
+ * @param {number} x - Kolumna
+ * @param {number} y - Wiersz
+ * @returns {{w: number, l: number, start: boolean}}
+ */
+export function bonusAt(x, y) {
+    const style = CELL_STYLES[store.game?.variant?.grid[y]?.[x]];
+    return { w: style?.w || 1, l: style?.l || 1, start: !!style?.start };
 }
 
 /**

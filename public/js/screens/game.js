@@ -15,6 +15,7 @@ import { navigate, refresh } from '../router.js';
 import { buildBoard, renderBoard, bindPlacedTaps, recallAll, coordLabel, resetBoard } from '../game/board.js';
 import { renderRack, bindRackDropZone, shuffleRack } from '../game/rack.js';
 import { clearPreviews, resetPreviewCache } from '../game/preview.js';
+import { quoteMove } from '../game/score.js';
 
 /**
  * Renderuje ekran gry.
@@ -87,7 +88,7 @@ export default function gameScreen(host) {
                 el('div', { class: 'rack-area' },
                     rackEl,
                     el('button', {
-                        class: 'btn btn-ghost btn-small', title: 'Przetasuj litery',
+                        class: 'btn btn-ghost btn-small rack-shuffle', title: 'Przetasuj litery',
                         onclick: () => shuffleRack(),
                     }, '🔀'),
                 ),
@@ -454,7 +455,7 @@ export default function gameScreen(host) {
         const table = store.table;
 
         if (!game || table.status === 'waiting') {
-            fill(actionsEl, el('button', { class: 'btn btn-ghost', onclick: doLeave }, '⏏ Wstań od stołu'));
+            fill(actionsEl, el('button', { class: 'btn btn-ghost', onclick: doLeave }, '⏏ Wstań od stołu'), portalButton());
             return;
         }
 
@@ -471,17 +472,28 @@ export default function gameScreen(host) {
                     }, '🔁 Rewanż')
                     : null,
                 el('button', { class: 'btn btn-ghost', onclick: doLeave }, '⏏ Wstań od stołu'),
+                portalButton(),
             );
             return;
         }
 
         const hintsAllowed = table.mode !== 'human' || store.config.flags?.allowHintsVsHuman;
 
+        // Wycena przed zatwierdzeniem — bez słownika, więc słowo może jeszcze
+        // okazać się nieznane. Przy złym układzie pokazujemy, co jest nie tak.
+        const quote = quoteMove();
+        const confirmLabel = quote && !quote.error
+            ? `✓ Zatwierdź · ${quote.points} pkt${quote.bingo ? ' ★' : ''}`
+            : '✓ Zatwierdź';
+        const confirmTitle = quote?.error
+            || (quote ? `${quote.words.join(', ')} — wynik przed sprawdzeniem w słowniku` : '');
+
         fill(actionsEl,
             el('button', {
-                class: 'btn btn-primary', disabled: !myTurn || store.placed.length === 0,
+                class: 'btn btn-primary btn-confirm', disabled: !myTurn || store.placed.length === 0,
+                title: confirmTitle,
                 onclick: confirmMove,
-            }, '✓ Zatwierdź'),
+            }, confirmLabel),
             el('button', {
                 class: 'btn', disabled: store.placed.length === 0, onclick: () => recallAll(),
             }, '↩ Cofnij'),
@@ -496,8 +508,21 @@ export default function gameScreen(host) {
                 ? el('button', { class: 'btn btn-hint', onclick: doHint }, '💡 Podpowiedź')
                 : null,
             el('button', { class: 'btn btn-danger btn-small', onclick: doResign }, 'Poddaj'),
-            el('button', { class: 'btn btn-ghost btn-small', onclick: doLeave }, '⏏'),
+            el('button', { class: 'btn btn-ghost btn-small', title: 'Wstań od stołu', onclick: doLeave }, '⏏'),
+            portalButton(),
         );
+    }
+
+    /**
+     * Wyjście do portalu bez wstawania od stołu. Widoczne tylko na telefonie,
+     * gdzie w trakcie gry chowamy nagłówek z menu, żeby zostawić miejsce planszy.
+     * @returns {HTMLElement}
+     */
+    function portalButton() {
+        return el('button', {
+            class: 'btn btn-ghost btn-small mobile-only', title: 'Menu portalu (zostajesz przy stole)',
+            onclick: () => navigate('/lobby'),
+        }, '☰');
     }
 
     /** Prawy panel: poczekalnia, podpowiedzi albo wyniki. */

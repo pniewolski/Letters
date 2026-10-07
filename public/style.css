@@ -46,6 +46,11 @@
     --cell-size: calc(var(--board-size) / var(--board-cells));
 }
 
+/* Bez powiększania stron na telefonie: układ jest dopasowany do szerokości
+   ekranu na sztywno, a dwuklik w klocek nie może przybliżać widoku. */
+html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; touch-action: manipulation; }
+html, body { overflow-x: hidden; }
+
 body {
     font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
     background: radial-gradient(1200px 600px at 50% -10%, #1b2439 0%, var(--bg) 60%);
@@ -544,6 +549,7 @@ textarea { resize: vertical; }
 .tile .tile-pts { position: absolute; bottom: 2px; right: 4px; font-size: .58rem; color: rgba(26, 26, 46, .6); }
 
 .actions { display: flex; gap: 7px; flex-wrap: wrap; justify-content: center; }
+.mobile-only { display: none; }
 
 .hint-list { list-style: none; display: flex; flex-direction: column; gap: 3px; }
 .hint-item {
@@ -717,8 +723,31 @@ textarea { resize: vertical; }
     .hero-stats { gap: 16px; }
     .table-list, .variant-grid { grid-template-columns: 1fr; }
     .variant-card { flex-direction: column; }
-    .tile { width: 40px; height: 40px; font-size: 1.15rem; }
-    .rack { flex-wrap: wrap; }
+    /* Stojak zawsze w jednym rzędzie: szerokość ekranu minus marginesy widoku
+       (20px), ramka i dopełnienie stojaka (18px) oraz odstępy między klockami. */
+    .rack-area { width: 100%; justify-content: center; }
+    .rack {
+        flex-wrap: nowrap; gap: 4px; min-width: 0; max-width: 100%;
+        --tile-w: min(44px, calc((100vw - 38px - (var(--rack-tiles, 7) - 1) * 4px) / var(--rack-tiles, 7)));
+        min-height: calc(var(--tile-w) + 18px);
+    }
+    .rack .tile { flex: 0 0 auto; width: var(--tile-w); height: var(--tile-w); font-size: calc(var(--tile-w) * .5); }
+    .rack .tile .tile-pts { font-size: calc(var(--tile-w) * .25); right: 2px; }
+    .rack-shuffle { display: none; }
+    .mobile-only { display: inline-flex; }
+    /* W trakcie gry nagłówek portalu tylko zabiera miejsce planszy — do menu
+       prowadzi przycisk ☰ przy akcjach, a z menu z powrotem — przycisk stołu. */
+    body[data-route="gra"] .app-header { display: none; }
+    body[data-route="gra"] .app-view { padding: 6px 10px 20px; }
+    /* Zwarty pasek tury — na wąskim ekranie części nie mogą na siebie nachodzić. */
+    .turn-clock { gap: 8px; padding: 6px 10px; }
+    .turn-clock-who { flex: 0 0 auto; white-space: nowrap; font-size: .9rem; }
+    .turn-clock-scores { flex: 1 1 0; flex-direction: column; align-items: center; gap: 0; font-size: .8rem; }
+    .turn-clock-score-name { max-width: 7em; }
+    .turn-clock-time { flex: 0 0 auto; flex-direction: column; align-items: flex-end; gap: 0; }
+    .turn-clock-value { font-size: 1.35rem; }
+    /* iOS przybliża stronę przy fokusie na polu z czcionką mniejszą niż 16px. */
+    input, select, textarea { font-size: 16px; }
     .btn { padding: 10px 14px; }
     .toasts { left: 12px; right: 12px; bottom: 12px; max-width: none; }
     /* Szerokość ekranu minus marginesy widoku, ramka i odstępy planszy oraz

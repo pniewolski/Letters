@@ -373,6 +373,10 @@ async function boot() {
     subscribe(['user', 'connection', 'online', 'table'], renderHeader);
     window.addEventListener('hashchange', renderHeader);
 
+    // Safari na iOS ignoruje `user-scalable=no` — gest szczypania blokujemy sami,
+    // żeby układ dopasowany do ekranu nie rozjeżdżał się przy przybliżeniu.
+    document.addEventListener('gesturestart', e => e.preventDefault());
+
     // Niezalogowany nie dostaje listy stołów po połączeniu (przychodzi dopiero
     // z odpowiedzią na uwierzytelnienie), więc prosimy o nią sami.
     subscribe('connection', () => {
