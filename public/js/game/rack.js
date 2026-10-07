@@ -89,6 +89,9 @@ export function renderRack(container) {
 
     const order = rackOrder();
     const used = new Set(store.placed.map(p => p.rackIndex));
+    // Na telefonie stojak ma się zmieścić w jednym rzędzie — CSS dzieli
+    // szerokość ekranu przez liczbę klocków (zależną od trybu gry).
+    container.style.setProperty('--rack-tiles', String(Math.max(order.length, 1)));
     const interactive = canPlay();
 
     for (const index of order) {
